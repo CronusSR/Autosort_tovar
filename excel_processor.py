@@ -21,9 +21,9 @@ class ExcelDataProcessor:
         self.branches = ['казыбаева', 'барыс', 'астана', 'шымкент']  # Основные филиалы
         
     def load_excel_file(self, file_path: str) -> Dict:
-        """Загрузка всех листов из Excel файла"""
+        """Загрузка всех листов из Excel файла без ограничений по размеру"""
         try:
-            # Читаем все листы
+            # Читаем все листы без ограничений
             excel_data = pd.read_excel(file_path, sheet_name=None, engine='openpyxl')
             self.raw_data = excel_data
             
@@ -203,7 +203,8 @@ class ExcelDataProcessor:
         
         # Рассчитываем минимальные запасы для каждого филиала
         for branch in self.branches:
-            ads_col = f'ads_{branch[:3]}'  # ads_kaz, ads_bar, etc.
+            branch_short = branch[:3]  # kaz, bar, ast, shy
+            ads_col = f'ads_{branch_short}'
             min_col = f'min_stock_{branch}'
             
             if ads_col in df.columns:

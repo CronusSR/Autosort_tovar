@@ -7,6 +7,7 @@
 
 import pandas as pd
 import numpy as np
+import io
 from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
@@ -293,42 +294,26 @@ class ExcelDataProcessor:
         
         return orders
     
-def export_results(self) -> io.BytesIO:
-        """Экспорт результатов в Excel"""
-        if self.orders_data is None or self.orders_data.empty:
-            return None
+    def export_results(self, orders_df: pd.DataFrame, 
+                      category_stats: Dict = None,
+                      space_distribution: Dict = None) -> Dict:
+        """Подготовка данных для экспорта"""
+        export_data = {
+            'orders': orders_df,
+            'summary': {
+                'total_positions': len(orders_df),
+                'total_quantity': orders_df['order_quantity'].sum(),
+                'total_value': orders_df['order_value'].sum() if 'order_value' in orders_df.columns else 0
+            }
+        }
         
-        try:
-            # Подготавливаем данные для экспорта
-            export_data = self.processor.export_results(
-                self.orders_data,
-                self.category_analysis,
-                self.space_distribution
-            )
-            
-            output = io.BytesIO()
-            
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Основной лист с заказами
-                export_data['orders'].to_excel(writer, sheet_name='Orders', index=False)
-                
-                # Лист с анализом категорий
-                if 'category_analysis' in export_data:
-                    export_data['category_analysis'].to_excel(
-                        writer, sheet_name='Category_Analysis', index=True
-                    )
-                
-                # Лист с распределением пространства
-                if 'space_distribution' in export_data:
-                    export_data['space_distribution'].to_excel(
-                        writer, sheet_name='Space_Distribution', index=True
-                    )
-                
-                # Лист со сводкой
-                summary_df = pd.DataFrame([export_data['summary']])
-                summary_df.to_excel(writer, sheet_name='Summary', index=False)
-            
-            output.seek(0)
+        if category_stats:
+            export_data['category_analysis'] = pd.DataFrame.from_dict(category_stats, orient='index')
+        
+        if space_distribution:
+            export_data['space_distribution'] = pd.DataFrame.from_dict(space_distribution, orient='index')
+        
+        return export_data
     
     def get_processing_summary(self) -> Dict:
         """Получение сводки по обработанным данным"""

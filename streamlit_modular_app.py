@@ -246,10 +246,13 @@ def ads_calculation_page(system):
             branch_stats = []
             for branch, data in system.sales_files_data.items():
                 if data['success']:
+                    # Используем новые названия колонок с проверкой
+                    avg_monthly = data.get('avg_monthly_sales', data.get('total_quantity_sold', 0))
+                    
                     branch_stats.append({
                         'Филиал': branch,
                         'Товаров': data['total_items'],
-                        'Среднемесячные продажи': f"{data.get('avg_monthly_sales', data.get('total_quantity_sold', 0)):,.0f}",
+                        'Среднемесячные продажи': f"{avg_monthly:,.0f}",
                         'ADS филиала': f"{data['total_ads']:.1f}",
                         'Метод расчета': data.get('calculation_method', 'неизвестно')
                     })

@@ -113,7 +113,7 @@ class ModularInventorySystem:
     
     def _process_single_sales_file(self, file_content, branch_name: str) -> Dict:
         """
-        Обработка одного файла продаж с правильным расчетом ADS
+        Обработка одного файла продаж
         
         Args:
             file_content: Содержимое файла
@@ -129,8 +129,6 @@ class ModularInventorySystem:
             else:
                 df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
             
-            print(f"📊 {branch_name}: Исходный размер файла: {df.shape}")
-            
             # Ищем строку с заголовками
             header_row = None
             for i, row in df.iterrows():
@@ -143,15 +141,14 @@ class ModularInventorySystem:
                 headers = df.iloc[header_row].tolist()
                 df = df.iloc[header_row + 1:].copy()
                 df.columns = headers
-                print(f"✅ {branch_name}: Найдена строка заголовков: {header_row}")
             
             # Стандартизируем названия колонок
-            original_columns = df.columns.tolist()
             df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' for i, col in enumerate(df.columns)]
             
-            print(f"📋 {branch_name}: Всего колонок: {len(df.columns)}")
+            # Определяем колонку количества продаж (аналогично основному методу)
+            quantity_column = self._find_quantity_column(df, branch_name)
             
-            # Находим номенклатуру
+            # Находим колонку номенклатуры
             nomenclature_col = None
             for col in df.columns:
                 if any(word in str(col).lower() for word in ['номенклатура', 'наименование', 'товар']):
@@ -163,89 +160,29 @@ class ModularInventorySystem:
             
             df = df.rename(columns={nomenclature_col: 'номенклатура'})
             
-            # Находим месячные колонки (M:AB в Excel = колонки 12-27)
-            # Ищем колонки с месячными данными
-            monthly_columns = []
-            month_patterns = [
-                'янв', 'фев', 'мар', 'апр', 'май', 'июн', 
-                'июл', 'авг', 'сен', 'окт', 'ноя', 'дек',
-                'jan', 'feb', 'mar', 'apr', 'may', 'jun',
-                'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
-            ]
-            
-            # Сначала ищем по названиям месяцев
-            for col in df.columns:
-                col_str = str(col).lower()
-                if any(pattern in col_str for pattern in month_patterns):
-                    monthly_columns.append(col)
-            
-            # Если не нашли по названиям, берем колонки с индексами 12-27 (M:AB)
-            if not monthly_columns and len(df.columns) > 27:
-                print(f"🔍 {branch_name}: Используем колонки по позициям M:AB (12-27)")
-                for i in range(12, min(28, len(df.columns))):
-                    if i < len(df.columns):
-                        monthly_columns.append(df.columns[i])
-            
-            # Если всё ещё не нашли, ищем числовые колонки
-            if not monthly_columns:
-                print(f"🔍 {branch_name}: Ищем числовые колонки для месячных данных")
-                for col in df.columns:
-                    if col == 'номенклатура':
-                        continue
-                    try:
-                        test_data = pd.to_numeric(df[col], errors='coerce')
-                        if test_data.count() > len(df) * 0.3:  # Если больше 30% данных числовые
-                            monthly_columns.append(col)
-                    except:
-                        continue
-            
-            print(f"📅 {branch_name}: Найдено месячных колонок: {len(monthly_columns)}")
-            if monthly_columns:
-                print(f"   Колонки: {monthly_columns[:5]}{'...' if len(monthly_columns) > 5 else ''}")
-            
             # Очищаем данные
             df = df.dropna(subset=['номенклатура'])
             df = df[df['номенклатура'].astype(str).str.strip() != '']
             df = df[df['номенклатура'].astype(str) != 'nan']
             
-            print(f"📊 {branch_name}: После очистки номенклатуры: {len(df)} строк")
-            
-            if monthly_columns:
-                # Преобразуем месячные колонки в числовой формат
-                for col in monthly_columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-                
-                # ПРАВИЛЬНЫЙ РАСЧЕТ ADS по вашей формуле
-                # 1. Рассчитываем среднее по месячным колонкам (аналог СРЗНАЧ)
-                df['avg_monthly_sales'] = df[monthly_columns].mean(axis=1)
-                
-                # 2. ADS = среднемесячные продажи / 30 дней
-                df['ads'] = df['avg_monthly_sales'] / 30
-                
-                # 3. Общие продажи за весь период (для справки)
-                df['total_period_sales'] = df[monthly_columns].sum(axis=1)
-                
-                # Убираем товары без продаж
-                df = df[df['avg_monthly_sales'] > 0]
-                
-                print(f"📈 {branch_name}: Товаров с продажами: {len(df)}")
-                print(f"📊 {branch_name}: Средние месячные продажи: {df['avg_monthly_sales'].sum():.1f}")
-                print(f"📊 {branch_name}: Общий ADS: {df['ads'].sum():.2f} единиц/день")
+            if quantity_column:
+                df['total_quantity_sold'] = pd.to_numeric(df[quantity_column], errors='coerce').fillna(0)
+                df = df[df['total_quantity_sold'] > 0]
+                df['ads'] = df['total_quantity_sold'] / 365
                 
                 return {
                     'success': True,
-                    'data': df[['номенклатура', 'avg_monthly_sales', 'ads', 'total_period_sales']],
+                    'data': df[['номенклатура', 'total_quantity_sold', 'ads']],
                     'total_items': len(df),
-                    'monthly_columns_found': len(monthly_columns),
-                    'avg_monthly_sales': df['avg_monthly_sales'].sum(),
+                    'quantity_column_used': quantity_column,
+                    'total_quantity_sold': df['total_quantity_sold'].sum(),
                     'total_ads': df['ads'].sum(),
-                    'calculation_method': 'Среднее по месяцам / 30 дней',
                     'branch_name': branch_name
                 }
             else:
                 return {
                     'success': False,
-                    'error': f'Не найдены месячные колонки в файле {branch_name}'
+                    'error': f'Не найдена колонка с количеством продаж в файле {branch_name}'
                 }
                 
         except Exception as e:
@@ -1172,13 +1109,6 @@ class ModularInventorySystem:
             }
             
             # Добавляем дополнительные метрики, если колонки существуют
-            if 'avg_monthly_sales' in ads_columns:
-                report['ads_analysis']['total_avg_monthly_sales'] = self.calculated_ads['avg_monthly_sales'].sum()
-            
-            if 'total_period_sales' in ads_columns:
-                report['ads_analysis']['total_period_sales'] = self.calculated_ads['total_period_sales'].sum()
-            
-            # Для обратной совместимости со старыми данными
             if 'total_quantity_sold' in ads_columns:
                 report['ads_analysis']['total_quantity_sold'] = self.calculated_ads['total_quantity_sold'].sum()
             
@@ -1197,7 +1127,6 @@ class ModularInventorySystem:
                 report['ads_analysis']['files_processed'] = len(self.sales_files_data)
                 successful_files = sum(1 for r in self.sales_files_data.values() if r['success'])
                 report['ads_analysis']['successful_files'] = successful_files
-                report['ads_analysis']['calculation_method'] = 'Excel формула: СРЗНАЧ(месяцы)/30'
         
         # Минимальные запасы сводка
         if self.calculated_min_stock is not None:

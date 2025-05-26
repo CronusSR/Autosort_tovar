@@ -40,160 +40,230 @@ class ModularInventorySystem:
             'safety_factor': 1.0    # Коэффициент безопасности
         }
     
-    def load_multiple_sales_files(self, files_dict: dict) -> Dict:
+    def load_sales_file(self, file_content) -> Dict:
         """
-        Загрузка множественных файлов продаж
+        ИСПРАВЛЕННАЯ версия загрузки файла продаж для расчета ADS
         
         Args:
-            files_dict: Словарь {название_филиала: file_content}
+            file_content: Содержимое файла продаж
             
         Returns:
-            Dict с результатами обработки всех файлов
+            Dict с информацией о загруженных данных продаж
         """
         try:
-            all_results = {}
-            combined_data = []
-            total_files = len(files_dict)
+            print("🔄 Начинаем обработку файла продаж...")
             
-            print(f"📁 Загружаем {total_files} файлов продаж...")
-            
-            for branch_name, file_content in files_dict.items():
-                print(f"\n🏪 Обрабатываем файл: {branch_name}")
-                
-                # Обрабатываем каждый файл отдельно
-                result = self._process_single_sales_file(file_content, branch_name)
-                
-                if result['success']:
-                    all_results[branch_name] = result
-                    # Добавляем данные в общий список
-                    branch_data = result['data'].copy()
-                    branch_data['branch'] = branch_name
-                    combined_data.append(branch_data)
-                    
-                    print(f"✅ {branch_name}: {result['total_items']} товаров, ADS: {result['total_ads']:.1f}")
-                else:
-                    print(f"❌ {branch_name}: {result['error']}")
-                    all_results[branch_name] = result
-            
-            # Объединяем данные всех филиалов
-            if combined_data:
-                combined_df = pd.concat(combined_data, ignore_index=True)
-                
-                # Суммируем продажи по товарам
-                aggregated_sales = combined_df.groupby('номенклатура').agg({
-                    'total_quantity_sold': 'sum',
-                    'ads': 'sum'
-                }).reset_index()
-                
-                # Сохраняем результаты
-                self.sales_files_data = all_results
-                self.combined_sales_data = combined_df
-                self.calculated_ads = aggregated_sales
-                
-                return {
-                    'success': True,
-                    'files_processed': len([r for r in all_results.values() if r['success']]),
-                    'total_files': total_files,
-                    'combined_items': len(aggregated_sales),
-                    'total_quantity_all_branches': aggregated_sales['total_quantity_sold'].sum(),
-                    'total_ads_all_branches': aggregated_sales['ads'].sum(),
-                    'branch_results': all_results
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': 'Не удалось обработать ни одного файла продаж'
-                }
-                
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f"Ошибка обработки множественных файлов: {str(e)}"
-            }
-    
-    def _process_single_sales_file(self, file_content, branch_name: str) -> Dict:
-        """
-        Обработка одного файла продаж
-        
-        Args:
-            file_content: Содержимое файла
-            branch_name: Название филиала/склада
-            
-        Returns:
-            Dict с результатами обработки файла
-        """
-        try:
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
                 df = pd.read_excel(file_content, engine='openpyxl')
             else:
                 df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
             
-            # Ищем строку с заголовками
-            header_row = None
-            for i, row in df.iterrows():
-                row_str = str(row.iloc[0]).lower()
-                if pd.notna(row.iloc[0]) and any(word in row_str for word in ['номенклатура', 'наименование', 'товар']):
-                    header_row = i
-                    break
+            print(f"📊 Исходный размер файла: {df.shape[0]} строк, {df.shape[1]} колонок")
             
-            if header_row is not None:
-                headers = df.iloc[header_row].tolist()
-                df = df.iloc[header_row + 1:].copy()
-                df.columns = headers
+            # УЛУЧШЕННЫЙ поиск заголовков
+            header_row = None
+            print("🔍 Поиск строки с заголовками...")
+            
+            for i in range(min(15, len(df))):  # Ищем в первых 15 строках
+                if df.iloc[i].isna().all():  # Пропускаем полностью пустые строки
+                    continue
+                    
+                # Проверяем первую непустую ячейку в строке
+                first_cell = None
+                for cell in df.iloc[i]:
+                    if pd.notna(cell) and str(cell).strip():
+                        first_cell = str(cell).lower().strip()
+                        break
+                
+                if first_cell:
+                    print(f"   Строка {i}: '{first_cell[:50]}{'...' if len(first_cell) > 50 else ''}'")
+                    
+                    # Расширенный список ключевых слов для поиска заголовков
+                    header_keywords = [
+                        'номенклатура', 'наименование', 'товар', 'название', 'продукт',
+                        'item', 'product', 'name', 'nomenclature',
+                        'артикул', 'код', 'позиция'
+                    ]
+                    
+                    if any(keyword in first_cell for keyword in header_keywords):
+                        header_row = i
+                        print(f"   ✅ НАЙДЕН ЗАГОЛОВОК на строке {i}")
+                        break
+            
+            if header_row is None:
+                print("   ⚠️  Заголовок не найден автоматически, используем строку 0")
+                header_row = 0
+            
+            # Применяем заголовки
+            print(f"📋 Применяем заголовки с строки {header_row}...")
+            headers = df.iloc[header_row].tolist()
+            df = df.iloc[header_row + 1:].copy()
+            df.columns = headers
+            
+            print(f"✅ После применения заголовков: {df.shape[0]} строк")
             
             # Стандартизируем названия колонок
-            df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' for i, col in enumerate(df.columns)]
+            print("🔧 Стандартизация названий колонок...")
+            original_columns = df.columns.tolist()
+            df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' 
+                         for i, col in enumerate(df.columns)]
             
-            # Определяем колонку количества продаж (аналогично основному методу)
-            quantity_column = self._find_quantity_column(df, branch_name)
-            
-            # Находим колонку номенклатуры
+            # УЛУЧШЕННЫЙ поиск колонки номенклатуры
+            print("🔍 Поиск колонки номенклатуры...")
             nomenclature_col = None
+            
+            # Сначала ищем по ключевым словам
+            nomenclature_keywords = [
+                'номенклатура', 'наименование', 'товар', 'название', 'продукт',
+                'item', 'product', 'name', 'nomenclature', 'артикул', 'код'
+            ]
+            
             for col in df.columns:
-                if any(word in str(col).lower() for word in ['номенклатура', 'наименование', 'товар']):
-                    nomenclature_col = col
+                col_str = str(col).lower().strip()
+                for keyword in nomenclature_keywords:
+                    if keyword in col_str:
+                        nomenclature_col = col
+                        print(f"   ✅ Найдена колонка номенклатуры: '{col}' (по ключевому слову '{keyword}')")
+                        break
+                if nomenclature_col:
                     break
             
             if nomenclature_col is None:
                 nomenclature_col = df.columns[0]
+                print(f"   ⚠️  Используем первую колонку как номенклатуру: '{nomenclature_col}'")
             
+            # Переименовываем колонку номенклатуры
             df = df.rename(columns={nomenclature_col: 'номенклатура'})
             
-            # Очищаем данные
-            df = df.dropna(subset=['номенклатура'])
-            df = df[df['номенклатура'].astype(str).str.strip() != '']
-            df = df[df['номенклатура'].astype(str) != 'nan']
+            # ОСТОРОЖНАЯ очистка данных номенклатуры
+            print("🧹 Очистка данных номенклатуры...")
             
-            if quantity_column:
-                df['total_quantity_sold'] = pd.to_numeric(df[quantity_column], errors='coerce').fillna(0)
-                df = df[df['total_quantity_sold'] > 0]
-                df['ads'] = df['total_quantity_sold'] / 365
-                
+            initial_count = len(df)
+            print(f"   Исходно: {initial_count} строк")
+            
+            # Показываем статистику ДО очистки
+            nomenclature_series = df['номенклатура']
+            nan_count = nomenclature_series.isna().sum()
+            empty_count = sum(nomenclature_series.astype(str).str.strip() == '')
+            nan_str_count = sum(nomenclature_series.astype(str) == 'nan')
+            
+            print(f"   Анализ качества номенклатуры:")
+            print(f"     • NaN значений: {nan_count}")
+            print(f"     • Пустых строк: {empty_count}")
+            print(f"     • Строк 'nan': {nan_str_count}")
+            
+            # Пошаговая очистка с подсчетом
+            df_clean = df.dropna(subset=['номенклатура'])
+            lost_nan = len(df) - len(df_clean)
+            print(f"   После удаления NaN: {len(df_clean)} (-{lost_nan})")
+            
+            df_clean = df_clean[df_clean['номенклатура'].astype(str).str.strip() != '']
+            lost_empty = len(df) - lost_nan - len(df_clean)
+            print(f"   После удаления пустых: {len(df_clean)} (-{lost_empty})")
+            
+            df_clean = df_clean[df_clean['номенклатура'].astype(str) != 'nan']
+            lost_nan_str = len(df) - lost_nan - lost_empty - len(df_clean)
+            print(f"   После удаления 'nan': {len(df_clean)} (-{lost_nan_str})")
+            
+            df = df_clean
+            total_lost_nomenclature = initial_count - len(df)
+            print(f"   📊 Итого потеряно на номенклатуре: {total_lost_nomenclature} строк")
+            
+            # КРИТИЧЕСКИ ВАЖНО: Улучшенный поиск колонки количества
+            print("🔍 Поиск колонки количества (улучшенный алгоритм)...")
+            quantity_column = self._find_quantity_column_improved(df, "main_file")
+            
+            if quantity_column is None:
                 return {
-                    'success': True,
-                    'data': df[['номенклатура', 'total_quantity_sold', 'ads']],
-                    'total_items': len(df),
-                    'quantity_column_used': quantity_column,
-                    'total_quantity_sold': df['total_quantity_sold'].sum(),
-                    'total_ads': df['ads'].sum(),
-                    'branch_name': branch_name
+                    'success': False, 
+                    'error': 'Не найдена колонка с количеством продаж. Проверьте структуру файла.'
                 }
-            else:
-                return {
-                    'success': False,
-                    'error': f'Не найдена колонка с количеством продаж в файле {branch_name}'
-                }
-                
-        except Exception as e:
+            
+            print(f"✅ Используем колонку количества: '{quantity_column}'")
+            
+            # Обработка колонки количества
+            print("🔢 Обработка данных количества...")
+            
+            # Преобразуем в числовой формат
+            df['total_sales'] = pd.to_numeric(df[quantity_column], errors='coerce')
+            
+            # Анализ данных количества
+            total_before_filter = len(df)
+            valid_numeric = df['total_sales'].notna().sum()
+            positive_values = (df['total_sales'] > 0).sum()
+            
+            print(f"   Анализ колонки '{quantity_column}':")
+            print(f"     • Всего строк: {total_before_filter}")
+            print(f"     • Числовых значений: {valid_numeric}")
+            print(f"     • Положительных значений: {positive_values}")
+            
+            # Заполняем NaN нулями и фильтруем только положительные
+            df['total_sales'] = df['total_sales'].fillna(0)
+            df_final = df[df['total_sales'] > 0].copy()
+            
+            lost_quantity = total_before_filter - len(df_final)
+            print(f"   После фильтрации количества: {len(df_final)} (-{lost_quantity})")
+            
+            # Рассчитываем ADS
+            print("📊 Расчет ADS...")
+            df_final['ads'] = df_final['total_sales'] / 365
+            
+            # Убираем дубликаты по номенклатуре (если есть)
+            initial_final_count = len(df_final)
+            df_final = df_final.drop_duplicates(subset=['номенклатура'], keep='first')
+            duplicates_removed = initial_final_count - len(df_final)
+            
+            if duplicates_removed > 0:
+                print(f"   Удалено дубликатов: {duplicates_removed}")
+            
+            # Сохраняем результат
+            self.sales_data = df_final
+            self.calculated_ads = df_final[['номенклатура', 'ads', 'total_sales']].copy()
+            
+            # ИТОГОВАЯ СТАТИСТИКА
+            print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА ОБРАБОТКИ:")
+            print("=" * 50)
+            print(f"Исходно строк в файле: {initial_count}")
+            print(f"Потеряно на очистке номенклатуры: {total_lost_nomenclature}")
+            print(f"Потеряно на фильтрации количества: {lost_quantity}")
+            print(f"Удалено дубликатов: {duplicates_removed}")
+            print(f"ИТОГО товаров в результате: {len(df_final)}")
+            print(f"Общий ADS: {df_final['ads'].sum():.2f}")
+            print(f"Общее количество продаж: {df_final['total_sales'].sum():,.0f}")
+            
+            # Топ товары для проверки
+            print(f"\n🏆 Топ-5 товаров по продажам:")
+            top_sellers = df_final.nlargest(5, 'total_sales')
+            for i, (_, row) in enumerate(top_sellers.iterrows(), 1):
+                print(f"  {i}. {row['номенклатура'][:60]:<60} | {row['total_sales']:>8,.0f}")
+            
             return {
-                'success': False,
-                'error': f'Ошибка обработки файла {branch_name}: {str(e)}'
+                'success': True,
+                'total_items': len(df_final),
+                'quantity_column_used': quantity_column,
+                'total_quantity_sold': df_final['total_sales'].sum(),
+                'total_ads': df_final['ads'].sum(),
+                'avg_ads': df_final['ads'].mean(),
+                'processing_stats': {
+                    'initial_rows': initial_count,
+                    'lost_nomenclature': total_lost_nomenclature,
+                    'lost_quantity': lost_quantity,
+                    'duplicates_removed': duplicates_removed,
+                    'final_items': len(df_final)
+                },
+                'top_sellers': df_final.nlargest(5, 'ads')[['номенклатура', 'ads']].to_dict('records')
             }
-    
-    def _find_quantity_column(self, df: pd.DataFrame, branch_name: str) -> str:
+            
+        except Exception as e:
+            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'error': f"Ошибка загрузки файла продаж: {str(e)}"}
+
+    def _find_quantity_column_improved(self, df: pd.DataFrame, branch_name: str) -> str:
         """
-        Поиск колонки с количеством продаж в файле
+        УЛУЧШЕННЫЙ поиск колонки с количеством продаж в файле
         
         Args:
             df: DataFrame с данными
@@ -202,46 +272,200 @@ class ModularInventorySystem:
         Returns:
             Название найденной колонки или None
         """
-        # 1. Проверяем колонку AD (индекс 29)
+        print(f"🔍 {branch_name}: Поиск колонки количества среди {len(df.columns)} колонок")
+        
+        # 1. ПРИОРИТЕТ: колонка AD (индекс 30)
         if len(df.columns) > 30:
             col_ad = df.columns[30]
-            test_data = pd.to_numeric(df[col_ad], errors='coerce')
-            if test_data.count() > 0:
-                print(f"  ✅ {branch_name}: Используем колонку AD (индекс 30)")
-                return col_ad
+            print(f"  📊 Проверяем колонку AD (индекс 30): '{col_ad}'")
+            
+            try:
+                test_data = pd.to_numeric(df[col_ad], errors='coerce')
+                valid_count = test_data.count()
+                total_count = len(test_data)
+                
+                if valid_count > 0:
+                    non_zero_count = (test_data > 0).sum()
+                    valid_percentage = (valid_count / total_count) * 100
+                    non_zero_percentage = (non_zero_count / valid_count) * 100 if valid_count > 0 else 0
+                    
+                    print(f"    ✓ AD: {valid_count}/{total_count} ({valid_percentage:.1f}%) валидных")
+                    print(f"    ✓ AD: {non_zero_count}/{valid_count} ({non_zero_percentage:.1f}%) положительных")
+                    
+                    # Показываем примеры значений
+                    sample_values = test_data.dropna().head(3).tolist()
+                    print(f"    📋 Примеры AD: {sample_values}")
+                    
+                    # Если более 30% валидных данных и более 20% положительных - используем
+                    if valid_percentage > 30 and non_zero_percentage > 20:
+                        print(f"  ✅ {branch_name}: Используем колонку AD")
+                        return col_ad
+                    else:
+                        print(f"  ⚠️ AD колонка имеет низкое качество данных")
+                else:
+                    print(f"  ❌ AD колонка не содержит числовых данных")
+            except Exception as e:
+                print(f"  ❌ Ошибка проверки AD: {str(e)}")
+        else:
+            print(f"  ❌ Недостаточно колонок для AD (нужно >30, есть {len(df.columns)})")
         
-        # 2. Ищем по ключевым словам
+        # 2. Поиск по ключевым словам (РАСШИРЕННЫЙ)
+        print(f"  🔤 Поиск по ключевым словам...")
         quantity_patterns = [
-            'количество', 'кол-во', 'кол_во', 'qty', 'quantity', 'штук', 'шт',
-            'продано', 'проданы', 'sold', 'единиц', 'ед', 'продажи'
+            # Русские варианты (основные)
+            'количество', 'кол-во', 'кол_во', 'кол.во', 'кол во', 'кол',
+            'штук', 'шт', 'штуки', 'штука', 'единиц', 'ед', 'единица',
+            'продано', 'проданы', 'продажи', 'продаж', 'прод',
+            'итого', 'сумма', 'всего', 'общее', 'общий',
+            'объем', 'объём', 'оборот',
+            # Английские варианты
+            'qty', 'quantity', 'amount', 'total', 'sold', 'sales',
+            'pieces', 'units', 'count', 'sum', 'volume',
+            # Сокращения и специфичные
+            'реализовано', 'реализация', 'отгружено', 'отгрузка',
+            'выручка', 'оборот', 'тираж'
         ]
+        
+        pattern_matches = []
         
         for col in df.columns:
             col_str = str(col).lower().strip()
-            if any(pattern in col_str for pattern in quantity_patterns):
-                test_data = pd.to_numeric(df[col], errors='coerce')
-                if test_data.count() > 0:
-                    print(f"  ✅ {branch_name}: Найдена колонка количества '{col}'")
-                    return col
+            
+            for pattern in quantity_patterns:
+                if pattern in col_str:
+                    try:
+                        test_data = pd.to_numeric(df[col], errors='coerce')
+                        valid_count = test_data.count()
+                        
+                        if valid_count > 0:
+                            non_zero_count = (test_data > 0).sum()
+                            total_count = len(test_data)
+                            
+                            valid_percentage = (valid_count / total_count) * 100
+                            non_zero_percentage = (non_zero_count / valid_count) * 100 if valid_count > 0 else 0
+                            
+                            # Качество = валидность * положительность * бонус за хорошие паттерны
+                            pattern_bonus = 1.5 if pattern in ['количество', 'кол-во', 'qty', 'sold'] else 1.0
+                            quality_score = (valid_percentage / 100) * (non_zero_percentage / 100) * pattern_bonus
+                            
+                            pattern_matches.append({
+                                'column': col,
+                                'pattern': pattern,
+                                'valid_count': valid_count,
+                                'non_zero_count': non_zero_count,
+                                'quality_score': quality_score,
+                                'valid_percentage': valid_percentage,
+                                'non_zero_percentage': non_zero_percentage
+                            })
+                            
+                            print(f"    ✓ '{col}' ('{pattern}'): {quality_score:.3f} качества")
+                            break
+                    except:
+                        continue
         
-        # 3. Ищем числовые колонки с разумными значениями
+        # Выбираем лучший вариант по ключевым словам
+        if pattern_matches:
+            best_match = max(pattern_matches, key=lambda x: x['quality_score'])
+            
+            if best_match['quality_score'] > 0.1:  # Минимальное качество 10%
+                print(f"  ✅ {branch_name}: Найдена по ключевому слову '{best_match['column']}'")
+                print(f"    📊 Качество: {best_match['quality_score']:.3f}, валидных: {best_match['valid_percentage']:.1f}%")
+                return best_match['column']
+        
+        # 3. Поиск среди всех числовых колонок
+        print(f"  🔢 Поиск среди числовых колонок...")
+        numeric_candidates = []
+        
         for col in df.columns:
             if col == 'номенклатура':
                 continue
+                
             try:
                 test_data = pd.to_numeric(df[col], errors='coerce').dropna()
+                
                 if len(test_data) > 0:
-                    # Проверяем, что значения разумные для количества товара
                     mean_val = test_data.mean()
-                    if 0.1 <= mean_val <= 100000:  # Разумный диапазон для количества
-                        print(f"  ✅ {branch_name}: Используем числовую колонку '{col}' (среднее: {mean_val:.1f})")
-                        return col
+                    median_val = test_data.median()
+                    std_val = test_data.std()
+                    min_val = test_data.min()
+                    max_val = test_data.max()
+                    
+                    # Разумность значений для количества товара
+                    is_reasonable = (
+                        0.01 <= mean_val <= 1000000 and    # Разумный средний объем
+                        min_val >= 0 and                   # Не отрицательные
+                        max_val <= 10000000 and            # Не астрономические
+                        (std_val < mean_val * 50 if mean_val > 0 else True)  # Разумный разброс
+                    )
+                    
+                    if is_reasonable:
+                        coverage = len(test_data) / len(df)  # Покрытие данных
+                        
+                        # Предпочитаем средние значения в разумном диапазоне (1-10000)
+                        mean_score = 1.0
+                        if 1 <= mean_val <= 10000:
+                            mean_score = 1.5
+                        elif 0.1 <= mean_val < 1 or 10000 < mean_val <= 100000:
+                            mean_score = 1.2
+                        elif mean_val < 0.1 or mean_val > 100000:
+                            mean_score = 0.8
+                        
+                        quality_score = coverage * mean_score
+                        
+                        numeric_candidates.append({
+                            'column': col,
+                            'mean': mean_val,
+                            'median': median_val,
+                            'count': len(test_data),
+                            'coverage': coverage,
+                            'quality_score': quality_score
+                        })
+                        
+                        print(f"    ✓ '{col}': ср={mean_val:.1f}, покрытие={coverage:.1%}, качество={quality_score:.3f}")
             except:
                 continue
         
-        print(f"  ❌ {branch_name}: Не найдена подходящая колонка количества")
-        return None
+        # Выбираем лучший числовой вариант
+        if numeric_candidates:
+            best_numeric = max(numeric_candidates, key=lambda x: x['quality_score'])
+            
+            if best_numeric['quality_score'] > 0.2:  # Минимальное качество 20%
+                print(f"  ✅ {branch_name}: Используем числовую колонку '{best_numeric['column']}'")
+                print(f"    📊 Среднее: {best_numeric['mean']:.1f}, покрытие: {best_numeric['coverage']:.1%}")
+                return best_numeric['column']
         
+        # 4. Последняя попытка - любая колонка с достаточным количеством положительных чисел
+        print(f"  🔄 Последняя попытка...")
+        
+        fallback_candidates = []
+        
+        for col in df.columns:
+            if col == 'номенклатура':
+                continue
+                
+            try:
+                test_data = pd.to_numeric(df[col], errors='coerce')
+                positive_data = test_data[test_data > 0]
+                
+                if len(positive_data) > max(50, len(df) * 0.1):  # Минимум 50 или 10% от всех строк
+                    coverage = len(positive_data) / len(df)
+                    fallback_candidates.append({
+                        'column': col,
+                        'positive_count': len(positive_data),
+                        'coverage': coverage
+                    })
+            except:
+                continue
+        
+        if fallback_candidates:
+            best_fallback = max(fallback_candidates, key=lambda x: x['coverage'])
+            print(f"  ⚠️ {branch_name}: Используем fallback колонку '{best_fallback['column']}'")
+            print(f"    📊 Положительных значений: {best_fallback['positive_count']}, покрытие: {best_fallback['coverage']:.1%}")
+            return best_fallback['column']
+        
+        print(f"  ❌ {branch_name}: НЕ НАЙДЕНА подходящая колонка количества")
+        return None
+
     def load_abc_file(self, file_content) -> Dict:
         """
         Загрузка и обработка файла для ABC анализа (исходники.xlsx)

@@ -29,16 +29,222 @@ class ModularInventorySystem:
         self.calculated_min_stock = None
         self.stock_comparison = None
         
+        # Множественные файлы продаж
+        self.sales_files_data = {}  # Хранилище данных по филиалам
+        self.combined_sales_data = None
+        
         # Параметры по умолчанию
         self.default_params = {
             'ip_target_days': 7,    # Транзитное время
             'min_stock_days': 30,   # Дни запаса
             'safety_factor': 1.0    # Коэффициент безопасности
         }
+    
+    def load_multiple_sales_files(self, files_dict: dict) -> Dict:
+        """
+        Загрузка множественных файлов продаж
+        
+        Args:
+            files_dict: Словарь {название_филиала: file_content}
+            
+        Returns:
+            Dict с результатами обработки всех файлов
+        """
+        try:
+            all_results = {}
+            combined_data = []
+            total_files = len(files_dict)
+            
+            print(f"📁 Загружаем {total_files} файлов продаж...")
+            
+            for branch_name, file_content in files_dict.items():
+                print(f"\n🏪 Обрабатываем файл: {branch_name}")
+                
+                # Обрабатываем каждый файл отдельно
+                result = self._process_single_sales_file(file_content, branch_name)
+                
+                if result['success']:
+                    all_results[branch_name] = result
+                    # Добавляем данные в общий список
+                    branch_data = result['data'].copy()
+                    branch_data['branch'] = branch_name
+                    combined_data.append(branch_data)
+                    
+                    print(f"✅ {branch_name}: {result['total_items']} товаров, ADS: {result['total_ads']:.1f}")
+                else:
+                    print(f"❌ {branch_name}: {result['error']}")
+                    all_results[branch_name] = result
+            
+            # Объединяем данные всех филиалов
+            if combined_data:
+                combined_df = pd.concat(combined_data, ignore_index=True)
+                
+                # Суммируем продажи по товарам
+                aggregated_sales = combined_df.groupby('номенклатура').agg({
+                    'total_quantity_sold': 'sum',
+                    'ads': 'sum'
+                }).reset_index()
+                
+                # Сохраняем результаты
+                self.sales_files_data = all_results
+                self.combined_sales_data = combined_df
+                self.calculated_ads = aggregated_sales
+                
+                return {
+                    'success': True,
+                    'files_processed': len([r for r in all_results.values() if r['success']]),
+                    'total_files': total_files,
+                    'combined_items': len(aggregated_sales),
+                    'total_quantity_all_branches': aggregated_sales['total_quantity_sold'].sum(),
+                    'total_ads_all_branches': aggregated_sales['ads'].sum(),
+                    'branch_results': all_results
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Не удалось обработать ни одного файла продаж'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f"Ошибка обработки множественных файлов: {str(e)}"
+            }
+    
+    def _process_single_sales_file(self, file_content, branch_name: str) -> Dict:
+        """
+        Обработка одного файла продаж
+        
+        Args:
+            file_content: Содержимое файла
+            branch_name: Название филиала/склада
+            
+        Returns:
+            Dict с результатами обработки файла
+        """
+        try:
+            # Читаем Excel файл
+            if hasattr(file_content, 'read'):
+                df = pd.read_excel(file_content, engine='openpyxl')
+            else:
+                df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+            
+            # Ищем строку с заголовками
+            header_row = None
+            for i, row in df.iterrows():
+                row_str = str(row.iloc[0]).lower()
+                if pd.notna(row.iloc[0]) and any(word in row_str for word in ['номенклатура', 'наименование', 'товар']):
+                    header_row = i
+                    break
+            
+            if header_row is not None:
+                headers = df.iloc[header_row].tolist()
+                df = df.iloc[header_row + 1:].copy()
+                df.columns = headers
+            
+            # Стандартизируем названия колонок
+            df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' for i, col in enumerate(df.columns)]
+            
+            # Определяем колонку количества продаж (аналогично основному методу)
+            quantity_column = self._find_quantity_column(df, branch_name)
+            
+            # Находим колонку номенклатуры
+            nomenclature_col = None
+            for col in df.columns:
+                if any(word in str(col).lower() for word in ['номенклатура', 'наименование', 'товар']):
+                    nomenclature_col = col
+                    break
+            
+            if nomenclature_col is None:
+                nomenclature_col = df.columns[0]
+            
+            df = df.rename(columns={nomenclature_col: 'номенклатура'})
+            
+            # Очищаем данные
+            df = df.dropna(subset=['номенклатура'])
+            df = df[df['номенклатура'].astype(str).str.strip() != '']
+            df = df[df['номенклатура'].astype(str) != 'nan']
+            
+            if quantity_column:
+                df['total_quantity_sold'] = pd.to_numeric(df[quantity_column], errors='coerce').fillna(0)
+                df = df[df['total_quantity_sold'] > 0]
+                df['ads'] = df['total_quantity_sold'] / 365
+                
+                return {
+                    'success': True,
+                    'data': df[['номенклатура', 'total_quantity_sold', 'ads']],
+                    'total_items': len(df),
+                    'quantity_column_used': quantity_column,
+                    'total_quantity_sold': df['total_quantity_sold'].sum(),
+                    'total_ads': df['ads'].sum(),
+                    'branch_name': branch_name
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f'Не найдена колонка с количеством продаж в файле {branch_name}'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Ошибка обработки файла {branch_name}: {str(e)}'
+            }
+    
+    def _find_quantity_column(self, df: pd.DataFrame, branch_name: str) -> str:
+        """
+        Поиск колонки с количеством продаж в файле
+        
+        Args:
+            df: DataFrame с данными
+            branch_name: Название филиала для логирования
+            
+        Returns:
+            Название найденной колонки или None
+        """
+        # 1. Проверяем колонку AD (индекс 29)
+        if len(df.columns) > 29:
+            col_ad = df.columns[29]
+            test_data = pd.to_numeric(df[col_ad], errors='coerce')
+            if test_data.count() > 0:
+                print(f"  ✅ {branch_name}: Используем колонку AD (индекс 29)")
+                return col_ad
+        
+        # 2. Ищем по ключевым словам
+        quantity_patterns = [
+            'количество', 'кол-во', 'кол_во', 'qty', 'quantity', 'штук', 'шт',
+            'продано', 'проданы', 'sold', 'единиц', 'ед', 'продажи'
+        ]
+        
+        for col in df.columns:
+            col_str = str(col).lower().strip()
+            if any(pattern in col_str for pattern in quantity_patterns):
+                test_data = pd.to_numeric(df[col], errors='coerce')
+                if test_data.count() > 0:
+                    print(f"  ✅ {branch_name}: Найдена колонка количества '{col}'")
+                    return col
+        
+        # 3. Ищем числовые колонки с разумными значениями
+        for col in df.columns:
+            if col == 'номенклатура':
+                continue
+            try:
+                test_data = pd.to_numeric(df[col], errors='coerce').dropna()
+                if len(test_data) > 0:
+                    # Проверяем, что значения разумные для количества товара
+                    mean_val = test_data.mean()
+                    if 0.1 <= mean_val <= 100000:  # Разумный диапазон для количества
+                        print(f"  ✅ {branch_name}: Используем числовую колонку '{col}' (среднее: {mean_val:.1f})")
+                        return col
+            except:
+                continue
+        
+        print(f"  ❌ {branch_name}: Не найдена подходящая колонка количества")
+        return None
         
     def load_abc_file(self, file_content) -> Dict:
         """
-        Загрузка и обработка файла для ABC анализа (исходникимини.xlsx)
+        Загрузка и обработка файла для ABC анализа (исходники.xlsx)
         
         Args:
             file_content: Содержимое файла (bytes или file-like объект)
@@ -49,41 +255,121 @@ class ModularInventorySystem:
         try:
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
-                df = pd.read_excel(file_content, sheet_name='Лист1', engine='openpyxl')
+                excel_file = pd.ExcelFile(file_content, engine='openpyxl')
             else:
-                df = pd.read_excel(io.BytesIO(file_content), sheet_name='Лист1', engine='openpyxl')
+                excel_file = pd.ExcelFile(io.BytesIO(file_content), engine='openpyxl')
             
-            # Пропускаем заголовки - данные начинаются с 6-й строки
-            df = df.iloc[5:].copy()
-            df = df.reset_index(drop=True)
+            print(f"📋 Листы в файле: {excel_file.sheet_names}")
             
-            # Устанавливаем правильные названия колонок
-            expected_columns = ['nomenclature', 'subcategory', 'category', 'annual_sales']
-            df.columns = expected_columns[:len(df.columns)]
+            # Ищем подходящий лист
+            target_sheet = None
+            if 'abc' in excel_file.sheet_names:
+                target_sheet = 'abc'
+                print("✅ Используем лист 'abc'")
+            elif 'Лист1' in excel_file.sheet_names:
+                target_sheet = 'Лист1'
+                print("✅ Используем лист 'Лист1'")
+            else:
+                target_sheet = excel_file.sheet_names[0]
+                print(f"✅ Используем первый лист: '{target_sheet}'")
+            
+            # Читаем выбранный лист
+            df = pd.read_excel(excel_file, sheet_name=target_sheet, engine='openpyxl')
+            print(f"📊 Исходный размер: {df.shape}")
+            
+            # Для листа 'abc' данные начинаются с 6-й строки (индекс 6)
+            if target_sheet == 'abc':
+                # Пропускаем заголовки - данные начинаются с 7-й строки (индекс 6)
+                df = df.iloc[6:].copy()
+                df = df.reset_index(drop=True)
+                print("✅ Пропущены заголовки, данные с 7-й строки")
+                
+                # Файл имеет ровно 4 колонки: Наименование, Группа, Категория, Продажи
+                if len(df.columns) == 4:
+                    df.columns = ['nomenclature', 'group', 'category', 'annual_sales']
+                    print("✅ Установлены названия для 4 колонок: nomenclature, group, category, annual_sales")
+                else:
+                    # Если колонок больше или меньше 4, адаптируемся
+                    new_columns = ['nomenclature', 'group', 'category', 'annual_sales']
+                    # Добавляем названия для дополнительных колонок
+                    while len(new_columns) < len(df.columns):
+                        new_columns.append(f'extra_col_{len(new_columns)}')
+                    # Обрезаем, если колонок меньше ожидаемого
+                    new_columns = new_columns[:len(df.columns)]
+                    df.columns = new_columns
+                    print(f"✅ Установлены названия для {len(new_columns)} колонок")
+                
+            else:
+                # Для других листов используем старую логику (с 5-й строки)
+                df = df.iloc[5:].copy()
+                df = df.reset_index(drop=True)
+                
+                # Адаптивное назначение колонок
+                base_columns = ['nomenclature', 'subcategory', 'category', 'annual_sales']
+                new_columns = base_columns.copy()
+                while len(new_columns) < len(df.columns):
+                    new_columns.append(f'extra_col_{len(new_columns)}')
+                new_columns = new_columns[:len(df.columns)]
+                df.columns = new_columns
+            
+            print(f"📊 После обработки заголовков: {df.shape}")
+            print(f"📋 Колонки: {list(df.columns)}")
             
             # Очистка данных
             df = df.dropna(subset=['nomenclature'])
             df = df[df['nomenclature'].astype(str).str.strip() != '']
             df = df[df['nomenclature'].astype(str) != 'nan']
             
+            print(f"📊 После очистки номенклатуры: {df.shape}")
+            
             # Преобразуем годовые продажи в числовой формат
             df['annual_sales'] = pd.to_numeric(df['annual_sales'], errors='coerce').fillna(0)
             df = df[df['annual_sales'] > 0]
             
+            print(f"📊 После фильтрации продаж: {df.shape}")
+            
             # Очищаем текстовые поля
-            for col in ['nomenclature', 'category', 'subcategory']:
+            for col in ['nomenclature', 'category']:
                 if col in df.columns:
                     df[col] = df[col].astype(str).str.strip()
                     df[col] = df[col].replace(['nan', 'None', ''], np.nan)
             
+            # Если есть колонка group, но нет category или category пустая, используем group как category
+            if 'group' in df.columns:
+                # Проверяем, есть ли валидные данные в category
+                valid_categories = df['category'].dropna()
+                valid_categories = valid_categories[valid_categories.astype(str).str.strip() != '']
+                
+                if len(valid_categories) == 0:
+                    # Если category пустая, используем group
+                    df['category'] = df['group']
+                    print("✅ Используем колонку 'group' как 'category'")
+                elif len(valid_categories) < len(df) * 0.5:
+                    # Если менее 50% товаров имеют category, дополняем из group
+                    df['category'] = df['category'].fillna(df['group'])
+                    print("✅ Дополняем пустые 'category' значениями из 'group'")
+            
+            # Финальная проверка
+            df = df.dropna(subset=['category'])
+            print(f"📊 Финальный размер: {df.shape}")
+            
             self.abc_data = df
+            
+            # Статистика
+            total_sales = df['annual_sales'].sum()
+            categories_count = df['category'].nunique()
+            
+            print(f"✅ ABC данные загружены: {len(df)} товаров, {categories_count} категорий")
+            print(f"📈 Общие продажи: {total_sales:,.0f}")
             
             return {
                 'success': True,
                 'total_items': len(df),
-                'categories': df['category'].nunique(),
-                'total_sales': df['annual_sales'].sum(),
-                'top_items': df.nlargest(5, 'annual_sales')[['nomenclature', 'annual_sales']].to_dict('records')
+                'categories': categories_count,
+                'total_sales': total_sales,
+                'sheet_used': target_sheet,
+                'top_items': df.nlargest(5, 'annual_sales')[['nomenclature', 'annual_sales']].to_dict('records'),
+                'sample_categories': df['category'].value_counts().head().to_dict()
             }
             
         except Exception as e:
@@ -535,9 +821,10 @@ class ModularInventorySystem:
                 'items_count': len(self.abc_data) if self.abc_data is not None else 0
             },
             'sales_analysis': {
-                'loaded': self.sales_data is not None,
+                'loaded': self.sales_data is not None or (hasattr(self, 'sales_files_data') and self.sales_files_data),
                 'ads_calculated': self.calculated_ads is not None,
-                'items_count': len(self.calculated_ads) if self.calculated_ads is not None else 0
+                'items_count': len(self.calculated_ads) if self.calculated_ads is not None else 0,
+                'multiple_files': hasattr(self, 'sales_files_data') and bool(self.sales_files_data)
             },
             'min_stock_analysis': {
                 'calculated': self.calculated_min_stock is not None,
@@ -600,6 +887,27 @@ class ModularInventorySystem:
                 # ADS расчеты
                 if self.calculated_ads is not None:
                     self.calculated_ads.to_excel(writer, sheet_name='ADS_расчет', index=False)
+                
+                # Данные по филиалам (если есть множественные файлы)
+                if hasattr(self, 'sales_files_data') and self.sales_files_data:
+                    branch_summary_data = []
+                    for branch, result in self.sales_files_data.items():
+                        if result['success']:
+                            branch_summary_data.append({
+                                'Филиал': branch,
+                                'Товаров': result['total_items'],
+                                'Общее_количество': result['total_quantity_sold'],
+                                'ADS_филиала': result['total_ads'],
+                                'Колонка_количества': result.get('quantity_column_used', 'неизвестно')
+                            })
+                    
+                    if branch_summary_data:
+                        branch_df = pd.DataFrame(branch_summary_data)
+                        branch_df.to_excel(writer, sheet_name='Статистика_филиалов', index=False)
+                
+                # Объединенные данные по филиалам
+                if hasattr(self, 'combined_sales_data') and self.combined_sales_data is not None:
+                    self.combined_sales_data.to_excel(writer, sheet_name='Объединенные_продажи', index=False)
                 
                 # Минимальные запасы
                 if self.calculated_min_stock is not None:
@@ -791,16 +1099,34 @@ class ModularInventorySystem:
         
         # ADS анализ сводка
         if self.calculated_ads is not None:
+            # Проверяем, какие колонки есть в данных
+            ads_columns = self.calculated_ads.columns.tolist()
+            
             report['ads_analysis'] = {
                 'total_items': len(self.calculated_ads),
                 'total_ads': self.calculated_ads['ads'].sum(),
-                'avg_ads': self.calculated_ads['ads'].mean(),
-                'total_sales_period': self.calculated_ads['total_sales'].sum(),
-                'top_seller': {
-                    'item': self.calculated_ads.loc[self.calculated_ads['ads'].idxmax(), 'номенклатура'],
-                    'ads_value': self.calculated_ads['ads'].max()
-                }
+                'avg_ads': self.calculated_ads['ads'].mean()
             }
+            
+            # Добавляем дополнительные метрики, если колонки существуют
+            if 'total_quantity_sold' in ads_columns:
+                report['ads_analysis']['total_quantity_sold'] = self.calculated_ads['total_quantity_sold'].sum()
+            
+            if 'total_sales' in ads_columns:
+                report['ads_analysis']['total_sales_period'] = self.calculated_ads['total_sales'].sum()
+            
+            # Топ товар по ADS
+            top_ads_idx = self.calculated_ads['ads'].idxmax()
+            report['ads_analysis']['top_seller'] = {
+                'item': self.calculated_ads.loc[top_ads_idx, 'номенклатура'],
+                'ads_value': self.calculated_ads.loc[top_ads_idx, 'ads']
+            }
+            
+            # Добавляем информацию о множественных файлах, если есть
+            if hasattr(self, 'sales_files_data') and self.sales_files_data:
+                report['ads_analysis']['files_processed'] = len(self.sales_files_data)
+                successful_files = sum(1 for r in self.sales_files_data.values() if r['success'])
+                report['ads_analysis']['successful_files'] = successful_files
         
         # Минимальные запасы сводка
         if self.calculated_min_stock is not None:

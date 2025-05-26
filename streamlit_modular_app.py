@@ -21,6 +21,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+def _extract_branch_name(filename: str) -> str:
+    """Извлечение названия филиала из имени файла"""
+    # Убираем расширение
+    name = filename.lower().replace('.xlsx', '').replace('.xls', '')
+    
+    # Ищем ключевые слова филиалов
+    if 'шымкент' in name:
+        if 'скл' in name:
+            return 'шымкент_склад'
+        elif 'маг' in name:
+            return 'шымкент_магазин'
+        else:
+            return 'шымкент'
+    elif 'астана' in name:
+        if 'скл' in name:
+            return 'астана_склад'
+        else:
+            return 'астана'
+    elif 'барыс' in name:
+        return 'барыс'
+    elif 'казыб' in name:
+        if 'скл' in name:
+            return 'казыбаева_склад'
+        elif 'тд' in name:
+            return 'казыбаева_тд'
+        else:
+            return 'казыбаева'
+    else:
+        # Если не удалось определить, используем имя файла
+        return name.replace(' ', '_').replace('-', '_')
+
 def init_system():
     """Инициализация системы в session_state"""
     if 'inventory_system' not in st.session_state:
@@ -153,6 +184,23 @@ def abc_analysis_page(system):
                 if load_result['success']:
                     st.success(f"✅ Файл загружен: {load_result['total_items']} товаров")
                     
+                    # Показываем детали загрузки
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Товаров", load_result['total_items'])
+                    with col2:
+                        st.metric("Категорий", load_result['categories'])
+                    with col3:
+                        st.metric("Использован лист", load_result.get('sheet_used', 'неизвестно'))
+                    
+                    # Показываем топ категории
+                    if 'sample_categories' in load_result:
+                        with st.expander("📊 Топ категории по количеству товаров"):
+                            sample_cats = load_result['sample_categories']
+                            cats_df = pd.DataFrame(list(sample_cats.items()), 
+                                                 columns=['Категория', 'Количество товаров'])
+                            st.dataframe(cats_df, use_container_width=True)
+                    
                     # Выполняем ABC анализ
                     analysis_result = system.perform_abc_analysis()
                     
@@ -165,12 +213,14 @@ def abc_analysis_page(system):
                     st.error(f"❌ {load_result['error']}")
 
 def ads_calculation_page(system):
-    """Страница расчета ADS"""
+    """Страница расчета ADS с поддержкой множественных файлов"""
     st.header("📊 Расчет ADS (Среднедневные продажи)")
     
     st.markdown("""
     **ADS (Average Daily Sales)** - ключевой показатель для планирования запасов.
-    Рассчитывается на основе исторических данных продаж.
+    Рассчитывается на основе исторических данных продаж по всем филиалам.
+    
+    📁 **Множественная загрузка**: Вы можете загрузить несколько файлов продаж от разных филиалов/складов.
     """)
     
     status = system.get_system_status()
@@ -189,6 +239,25 @@ def ads_calculation_page(system):
         with col3:
             st.metric("Средний ADS", f"{ads_data['ads'].mean():.2f}")
         
+        # Показываем информацию о филиалах, если есть
+        if hasattr(system, 'sales_files_data') and system.sales_files_data:
+            st.subheader("🏪 Статистика по филиалам")
+            
+            branch_stats = []
+            for branch, data in system.sales_files_data.items():
+                if data['success']:
+                    branch_stats.append({
+                        'Филиал': branch,
+                        'Товаров': data['total_items'],
+                        'Общее количество': f"{data['total_quantity_sold']:,.0f}",
+                        'ADS филиала': f"{data['total_ads']:.1f}",
+                        'Колонка': data.get('quantity_column_used', 'неизвестно')
+                    })
+            
+            if branch_stats:
+                branch_df = pd.DataFrame(branch_stats)
+                st.dataframe(branch_df, use_container_width=True)
+        
         # Топ товары по ADS
         st.subheader("🏆 Топ товары по ADS")
         top_ads = ads_data.nlargest(10, 'ads')
@@ -198,7 +267,7 @@ def ads_calculation_page(system):
             x='ads',
             y='номенклатура',
             orientation='h',
-            title='Топ-10 товаров по среднедневным продажам'
+            title='Топ-10 товаров по среднедневным продажам (все филиалы)'
         )
         st.plotly_chart(fig_ads, use_container_width=True)
         
@@ -207,31 +276,126 @@ def ads_calculation_page(system):
             st.dataframe(ads_data, use_container_width=True)
         
         # Кнопка для перезагрузки
-        if st.button("🔄 Загрузить новый файл продаж"):
+        if st.button("🔄 Загрузить новые файлы продаж"):
             system.sales_data = None
             system.calculated_ads = None
+            system.sales_files_data = {}
+            system.combined_sales_data = None
             st.rerun()
     
     else:
         # ADS не рассчитан
-        st.info("Загрузите файл с данными продаж (например: шымкент скл прод мая 24май 25 мини.xlsx)")
+        st.info("Загрузите файлы с данными продаж по филиалам")
         
-        sales_file = st.file_uploader(
-            "Выберите файл продаж",
-            type=['xlsx', 'xls'],
-            help="Файл должен содержать данные продаж по месяцам"
+        # Выбор режима загрузки
+        upload_mode = st.radio(
+            "Режим загрузки:",
+            ["📁 Один файл", "📁 Множественные файлы"],
+            help="Выберите один файл или загрузите несколько файлов от разных филиалов"
         )
         
-        if sales_file is not None:
-            with st.spinner("Обработка данных продаж..."):
-                load_result = system.load_sales_file(sales_file)
+        if upload_mode == "📁 Один файл":
+            # Режим одного файла (старая логика)
+            sales_file = st.file_uploader(
+                "Выберите файл продаж",
+                type=['xlsx', 'xls'],
+                help="Файл должен содержать данные продаж по месяцам или общее количество"
+            )
+            
+            if sales_file is not None:
+                with st.spinner("Обработка данных продаж..."):
+                    load_result = system.load_sales_file(sales_file)
+                    
+                    if load_result['success']:
+                        st.success(f"✅ ADS рассчитан для {load_result['total_items']} товаров")
+                        
+                        # Показываем какая колонка использовалась
+                        if 'quantity_column_used' in load_result:
+                            st.info(f"📊 Использована колонка: {load_result['quantity_column_used']}")
+                        
+                        # Показываем статистику в зависимости от типа данных
+                        if 'total_quantity_sold' in load_result:
+                            st.metric("Общее количество продаж", f"{load_result['total_quantity_sold']:,.0f} единиц")
+                            st.metric("Общий ADS", f"{load_result['total_ads']:.1f} единиц/день")
+                        else:
+                            st.warning("⚠️ Возможно, используются денежные суммы вместо количества товаров")
+                        
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {load_result['error']}")
+        
+        else:
+            # Режим множественных файлов
+            st.markdown("### 📁 Загрузка файлов по филиалам")
+            st.markdown("Загрузите файлы продаж для каждого филиала/склада:")
+            
+            # Множественная загрузка файлов
+            uploaded_files = st.file_uploader(
+                "Выберите файлы продаж",
+                type=['xlsx', 'xls'],
+                accept_multiple_files=True,
+                help="Загрузите все файлы продаж от разных филиалов одновременно"
+            )
+            
+            if uploaded_files:
+                st.write(f"📁 Загружено файлов: {len(uploaded_files)}")
                 
-                if load_result['success']:
-                    st.success(f"✅ ADS рассчитан для {load_result['total_items']} товаров")
-                    st.info(f"Найдено {load_result['sales_columns_found']} колонок с данными продаж")
-                    st.rerun()
-                else:
-                    st.error(f"❌ {load_result['error']}")
+                # Показываем список файлов
+                with st.expander("📋 Список загруженных файлов"):
+                    for i, file in enumerate(uploaded_files, 1):
+                        st.write(f"{i}. {file.name} ({file.size / 1024 / 1024:.1f} MB)")
+                
+                if st.button("🔄 Обработать все файлы"):
+                    with st.spinner("Обработка множественных файлов продаж..."):
+                        # Подготавливаем словарь файлов
+                        files_dict = {}
+                        for file in uploaded_files:
+                            # Извлекаем название филиала из имени файла
+                            branch_name = _extract_branch_name(file.name)
+                            files_dict[branch_name] = file
+                        
+                        # Обрабатываем все файлы
+                        load_result = system.load_multiple_sales_files(files_dict)
+                        
+                        if load_result['success']:
+                            st.success(f"✅ Обработано {load_result['files_processed']} из {load_result['total_files']} файлов")
+                            
+                            # Показываем общую статистику
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Уникальных товаров", load_result['combined_items'])
+                            with col2:
+                                st.metric("Общее количество", f"{load_result['total_quantity_all_branches']:,.0f}")
+                            with col3:
+                                st.metric("Общий ADS", f"{load_result['total_ads_all_branches']:.1f}")
+                            
+                            # Показываем результаты по филиалам
+                            st.subheader("📊 Результаты по филиалам")
+                            branch_results = []
+                            for branch, result in load_result['branch_results'].items():
+                                if result['success']:
+                                    branch_results.append({
+                                        'Филиал': branch,
+                                        'Статус': '✅ Успешно',
+                                        'Товаров': result['total_items'],
+                                        'Количество': f"{result['total_quantity_sold']:,.0f}",
+                                        'ADS': f"{result['total_ads']:.1f}"
+                                    })
+                                else:
+                                    branch_results.append({
+                                        'Филиал': branch,
+                                        'Статус': '❌ Ошибка',
+                                        'Товаров': 0,
+                                        'Количество': result['error'][:50] + "...",
+                                        'ADS': 0
+                                    })
+                            
+                            results_df = pd.DataFrame(branch_results)
+                            st.dataframe(results_df, use_container_width=True)
+                            
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {load_result['error']}")
 
 def min_stock_calculation_page(system):
     """Страница расчета минимальных запасов"""

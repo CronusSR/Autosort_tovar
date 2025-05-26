@@ -203,11 +203,11 @@ class ModularInventorySystem:
             Название найденной колонки или None
         """
         # 1. Проверяем колонку AD (индекс 29)
-        if len(df.columns) > 29:
-            col_ad = df.columns[29]
+        if len(df.columns) > 30:
+            col_ad = df.columns[30]
             test_data = pd.to_numeric(df[col_ad], errors='coerce')
             if test_data.count() > 0:
-                print(f"  ✅ {branch_name}: Используем колонку AD (индекс 29)")
+                print(f"  ✅ {branch_name}: Используем колонку AD (индекс 30)")
                 return col_ad
         
         # 2. Ищем по ключевым словам

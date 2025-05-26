@@ -199,26 +199,37 @@ class ExcelDataProcessor:
         if days_supply is not None:
             df['days_supply'] = days_supply
         else:
-            df['days_supply'] = df['days_target'].fillna(10)
+            df['days_supply'] = df['days_target'].fillna(30)
         
-        # Рассчитываем минимальные запасы для каждого филиала
-        for branch in self.branches:
-            branch_short = branch[:3]  # kaz, bar, ast, shy
-            ads_col = f'ads_{branch_short}'
-            min_col = f'min_stock_{branch}'
-            
-            if ads_col in df.columns:
-                df[min_col] = df[ads_col] * df['days_supply']
+        # ИСПРАВЛЕНИЕ: Используем существующие минимальные запасы из файла
+        # Минимальные запасы уже рассчитаны в Excel и находятся в колонках L-O
+        
+        # Переименовываем существующие колонки минимальных запасов для удобства
+        existing_min_cols = {
+            'min_kaz': 'min_казыбаева',
+            'min_bar': 'min_барыс', 
+            'min_ast': 'min_астана',
+            'min_shy': 'min_шымкент'
+        }
+        
+        for old_col, new_col in existing_min_cols.items():
+            if old_col in df.columns:
+                df[new_col] = df[old_col]
         
         # Общий минимальный запас
-        min_cols = [f'min_stock_{branch}' for branch in self.branches]
+        min_cols = ['min_kaz', 'min_bar', 'min_ast', 'min_shy']
         existing_min_cols = [col for col in min_cols if col in df.columns]
         df['total_min_stock'] = df[existing_min_cols].sum(axis=1)
         
         # Общий ADS
-        ads_cols = [f'ads_{branch[:3]}' for branch in self.branches]
+        ads_cols = ['ads_kaz', 'ads_bar', 'ads_ast', 'ads_shy']
         existing_ads_cols = [col for col in ads_cols if col in df.columns]
         df['total_ads'] = df[existing_ads_cols].sum(axis=1)
+        
+        # Общие остатки
+        stock_cols = ['stock_kaz', 'stock_bar', 'stock_ast', 'stock_shy']
+        existing_stock_cols = [col for col in stock_cols if col in df.columns]
+        df['total_current_stock'] = df[existing_stock_cols].sum(axis=1)
         
         return df
     
@@ -241,20 +252,25 @@ class ExcelDataProcessor:
                     branch_short = branch[:3]  # kaz, bar, ast, shy
                     
                     ads_col = f'ads_{branch_short}'
-                    min_stock_col = f'min_stock_{branch}'
                     stock_col = f'stock_{branch_short}'
                     
                     # Получаем данные для филиала
                     ads_value = row.get(ads_col, 0) or 0
-                    min_stock = row.get(min_stock_col, 0) or 0
                     current_stock = row.get(stock_col, 0) or 0
+                    days_supply = row.get('days_supply', 30)
                     
-                    # Если нет min_stock, рассчитываем на основе ADS
-                    if min_stock == 0 and ads_value > 0:
-                        days_supply = row.get('days_supply', 30)
+                    # ИСПРАВЛЕНИЕ: Используем существующие минимальные запасы из файла
+                    # вместо пересчета
+                    min_stock_from_file = row.get(f'min_{branch_short}', 0) or 0
+                    
+                    # Если в файле есть готовый мин запас, используем его
+                    if min_stock_from_file > 0:
+                        min_stock = min_stock_from_file
+                    else:
+                        # Иначе рассчитываем на основе ADS
                         min_stock = ads_value * days_supply
                     
-                    # Логика формирования заказа
+                    # Логика формирования заказа: если мин запас больше остатков
                     stock_deficit = max(0, min_stock - current_stock)
                     
                     if stock_deficit > 0:
@@ -269,11 +285,12 @@ class ExcelDataProcessor:
                             'current_stock': current_stock,
                             'stock_deficit': stock_deficit,
                             'order_quantity': round(order_quantity, 2),
-                            'days_supply': row.get('days_supply', 30)
+                            'days_supply': days_supply
                         })
                         
             except Exception as e:
-                # Пропускаем проблемные строки
+                # Пропускаем проблемные строки, но логируем ошибку
+                print(f"Ошибка обработки строки {index}: {str(e)}")
                 continue
         
         orders_df = pd.DataFrame(orders_list)

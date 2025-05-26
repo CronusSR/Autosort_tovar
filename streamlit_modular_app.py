@@ -249,9 +249,9 @@ def ads_calculation_page(system):
                     branch_stats.append({
                         'Филиал': branch,
                         'Товаров': data['total_items'],
-                        'Общее количество': f"{data['total_quantity_sold']:,.0f}",
+                        'Среднемесячные продажи': f"{data.get('avg_monthly_sales', data.get('total_quantity_sold', 0)):,.0f}",
                         'ADS филиала': f"{data['total_ads']:.1f}",
-                        'Колонка': data.get('quantity_column_used', 'неизвестно')
+                        'Метод расчета': data.get('calculation_method', 'неизвестно')
                     })
             
             if branch_stats:
@@ -365,7 +365,10 @@ def ads_calculation_page(system):
                             with col1:
                                 st.metric("Уникальных товаров", load_result['combined_items'])
                             with col2:
-                                st.metric("Общее количество", f"{load_result['total_quantity_all_branches']:,.0f}")
+                                if 'total_avg_monthly_sales' in load_result:
+                                    st.metric("Общие среднемесячные", f"{load_result['total_avg_monthly_sales']:,.0f}")
+                                else:
+                                    st.metric("Общее количество", f"{load_result.get('total_quantity_all_branches', 0):,.0f}")
                             with col3:
                                 st.metric("Общий ADS", f"{load_result['total_ads_all_branches']:.1f}")
                             
@@ -378,16 +381,18 @@ def ads_calculation_page(system):
                                         'Филиал': branch,
                                         'Статус': '✅ Успешно',
                                         'Товаров': result['total_items'],
-                                        'Количество': f"{result['total_quantity_sold']:,.0f}",
-                                        'ADS': f"{result['total_ads']:.1f}"
+                                        'Среднемесячные': f"{result.get('avg_monthly_sales', 0):,.0f}",
+                                        'ADS': f"{result['total_ads']:.1f}",
+                                        'Месяцев': result.get('monthly_columns_found', 0)
                                     })
                                 else:
                                     branch_results.append({
                                         'Филиал': branch,
                                         'Статус': '❌ Ошибка',
                                         'Товаров': 0,
-                                        'Количество': result['error'][:50] + "...",
-                                        'ADS': 0
+                                        'Среднемесячные': result['error'][:30] + "...",
+                                        'ADS': 0,
+                                        'Месяцев': 0
                                     })
                             
                             results_df = pd.DataFrame(branch_results)

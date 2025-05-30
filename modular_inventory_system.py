@@ -40,227 +40,283 @@ class ModularInventorySystem:
             'safety_factor': 1.0    # Коэффициент безопасности
         }
     
-    def load_sales_file(self, file_content) -> Dict:
+    def load_sales_file_updated(self, file_content) -> Dict:
         """
-        ИСПРАВЛЕННАЯ версия загрузки файла продаж для расчета ADS
-        
-        Args:
-            file_content: Содержимое файла продаж
-            
-        Returns:
-            Dict с информацией о загруженных данных продаж
+        ОБНОВЛЕННАЯ загрузка файла продаж с новой логикой ADS
+        НОМЕНКЛАТУРА: Колонка B (индекс 1) - ИСПРАВЛЕНО!
+        ДИАПАЗОН: M4:AB4 до последнего товара (исключая последнюю строку)
+        ФОРМУЛА: ADS = (среднее от M4:AB4) / 30
         """
         try:
-            print("🔄 Начинаем обработку файла продаж...")
-            
+            print("🔄 Обработка файла с ИСПРАВЛЕННОЙ логикой ADS (номенклатура в колонке B)...")
+        
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
                 df = pd.read_excel(file_content, engine='openpyxl')
             else:
                 df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
-            
+        
             print(f"📊 Исходный размер файла: {df.shape[0]} строк, {df.shape[1]} колонок")
             
-            # УЛУЧШЕННЫЙ поиск заголовков
-            header_row = None
-            print("🔍 Поиск строки с заголовками...")
+            # ИСПРАВЛЕННЫЕ параметры
+            start_col_index = 12  # Колонка M
+            end_col_index = 28    # Колонка AB+1 (не включается)
+            start_row = 3         # Строка 4 (индекс 3)
+            nomenclature_col = 1  # Колонка B (индекс 1) - ИСПРАВЛЕНО!
             
-            for i in range(min(15, len(df))):  # Ищем в первых 15 строках
-                if df.iloc[i].isna().all():  # Пропускаем полностью пустые строки
-                    continue
-                    
-                # Проверяем первую непустую ячейку в строке
-                first_cell = None
-                for cell in df.iloc[i]:
-                    if pd.notna(cell) and str(cell).strip():
-                        first_cell = str(cell).lower().strip()
-                        break
-                
-                if first_cell:
-                    print(f"   Строка {i}: '{first_cell[:50]}{'...' if len(first_cell) > 50 else ''}'")
-                    
-                    # Расширенный список ключевых слов для поиска заголовков
-                    header_keywords = [
-                        'номенклатура', 'наименование', 'товар', 'название', 'продукт',
-                        'item', 'product', 'name', 'nomenclature',
-                        'артикул', 'код', 'позиция'
-                    ]
-                    
-                    if any(keyword in first_cell for keyword in header_keywords):
-                        header_row = i
-                        print(f"   ✅ НАЙДЕН ЗАГОЛОВОК на строке {i}")
-                        break
+            print(f"📋 ИСПРАВЛЕННАЯ ЛОГИКА:")
+            print(f"   • Номенклатура: Колонка B (индекс {nomenclature_col})")
+            print(f"   • Данные продаж: колонки {start_col_index}:{end_col_index} (M:AB)")
+            print(f"   • Начальная строка: {start_row+1}")
             
-            if header_row is None:
-                print("   ⚠️  Заголовок не найден автоматически, используем строку 0")
-                header_row = 0
-            
-            # Применяем заголовки
-            print(f"📋 Применяем заголовки с строки {header_row}...")
-            headers = df.iloc[header_row].tolist()
-            df = df.iloc[header_row + 1:].copy()
-            df.columns = headers
-            
-            print(f"✅ После применения заголовков: {df.shape[0]} строк")
-            
-            # Стандартизируем названия колонок
-            print("🔧 Стандартизация названий колонок...")
-            original_columns = df.columns.tolist()
-            df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' 
-                         for i, col in enumerate(df.columns)]
-            
-            # УЛУЧШЕННЫЙ поиск колонки номенклатуры
-            print("🔍 Поиск колонки номенклатуры...")
-            nomenclature_col = None
-            
-            # Сначала ищем по ключевым словам
-            nomenclature_keywords = [
-                'номенклатура', 'наименование', 'товар', 'название', 'продукт',
-                'item', 'product', 'name', 'nomenclature', 'артикул', 'код'
-            ]
-            
-            for col in df.columns:
-                col_str = str(col).lower().strip()
-                for keyword in nomenclature_keywords:
-                    if keyword in col_str:
-                        nomenclature_col = col
-                        print(f"   ✅ Найдена колонка номенклатуры: '{col}' (по ключевому слову '{keyword}')")
-                        break
-                if nomenclature_col:
-                    break
-            
-            if nomenclature_col is None:
-                nomenclature_col = df.columns[0]
-                print(f"   ⚠️  Используем первую колонку как номенклатуру: '{nomenclature_col}'")
-            
-            # Переименовываем колонку номенклатуры
-            df = df.rename(columns={nomenclature_col: 'номенклатура'})
-            
-            # ОСТОРОЖНАЯ очистка данных номенклатуры
-            print("🧹 Очистка данных номенклатуры...")
-            
-            initial_count = len(df)
-            print(f"   Исходно: {initial_count} строк")
-            
-            # Показываем статистику ДО очистки
-            nomenclature_series = df['номенклатура']
-            nan_count = nomenclature_series.isna().sum()
-            empty_count = sum(nomenclature_series.astype(str).str.strip() == '')
-            nan_str_count = sum(nomenclature_series.astype(str) == 'nan')
-            
-            print(f"   Анализ качества номенклатуры:")
-            print(f"     • NaN значений: {nan_count}")
-            print(f"     • Пустых строк: {empty_count}")
-            print(f"     • Строк 'nan': {nan_str_count}")
-            
-            # Пошаговая очистка с подсчетом
-            df_clean = df.dropna(subset=['номенклатура'])
-            lost_nan = len(df) - len(df_clean)
-            print(f"   После удаления NaN: {len(df_clean)} (-{lost_nan})")
-            
-            df_clean = df_clean[df_clean['номенклатура'].astype(str).str.strip() != '']
-            lost_empty = len(df) - lost_nan - len(df_clean)
-            print(f"   После удаления пустых: {len(df_clean)} (-{lost_empty})")
-            
-            df_clean = df_clean[df_clean['номенклатура'].astype(str) != 'nan']
-            lost_nan_str = len(df) - lost_nan - lost_empty - len(df_clean)
-            print(f"   После удаления 'nan': {len(df_clean)} (-{lost_nan_str})")
-            
-            df = df_clean
-            total_lost_nomenclature = initial_count - len(df)
-            print(f"   📊 Итого потеряно на номенклатуре: {total_lost_nomenclature} строк")
-            
-            # КРИТИЧЕСКИ ВАЖНО: Улучшенный поиск колонки количества
-            print("🔍 Поиск колонки количества (улучшенный алгоритм)...")
-            quantity_column = self._find_quantity_column_improved(df, "main_file")
-            
-            if quantity_column is None:
+            # Проверяем достаточность колонок
+            if df.shape[1] < end_col_index:
                 return {
-                    'success': False, 
-                    'error': 'Не найдена колонка с количеством продаж. Проверьте структуру файла.'
+                    'success': False,
+                    'error': f'Недостаточно колонок в файле. Нужно минимум {end_col_index}, есть {df.shape[1]}'
                 }
             
-            print(f"✅ Используем колонку количества: '{quantity_column}'")
+            # Получаем номенклатуру из колонки B (индекс 1) - ИСПРАВЛЕНО!
+            nomenclature_data = df.iloc[start_row:, nomenclature_col].copy()
             
-            # Обработка колонки количества
-            print("🔢 Обработка данных количества...")
+            # Очищаем номенклатуру
+            print("🧹 Очистка номенклатуры из колонки B...")
+            initial_count = len(nomenclature_data)
             
-            # Преобразуем в числовой формат
-            df['total_sales'] = pd.to_numeric(df[quantity_column], errors='coerce')
+            nomenclature_clean = nomenclature_data.dropna()
+            nomenclature_clean = nomenclature_clean[nomenclature_clean.astype(str).str.strip() != '']
+            nomenclature_clean = nomenclature_clean[nomenclature_clean.astype(str) != 'nan']
             
-            # Анализ данных количества
-            total_before_filter = len(df)
-            valid_numeric = df['total_sales'].notna().sum()
-            positive_values = (df['total_sales'] > 0).sum()
+            # Исключаем последнюю строчку
+            if len(nomenclature_clean) > 0:
+                nomenclature_clean = nomenclature_clean[:-1]
+                print("✅ Исключена последняя строчка")
             
-            print(f"   Анализ колонки '{quantity_column}':")
-            print(f"     • Всего строк: {total_before_filter}")
-            print(f"     • Числовых значений: {valid_numeric}")
-            print(f"     • Положительных значений: {positive_values}")
+            valid_indices = nomenclature_clean.index
+            print(f"📊 После очистки: {len(nomenclature_clean)} товаров (было {initial_count})")
             
-            # Заполняем NaN нулями и фильтруем только положительные
-            df['total_sales'] = df['total_sales'].fillna(0)
-            df_final = df[df['total_sales'] > 0].copy()
+            if len(nomenclature_clean) == 0:
+                return {
+                    'success': False,
+                    'error': 'Нет валидных товаров после очистки номенклатуры из колонки B'
+                }
             
-            lost_quantity = total_before_filter - len(df_final)
-            print(f"   После фильтрации количества: {len(df_final)} (-{lost_quantity})")
+            # Извлекаем данные продаж из диапазона M:AB
+            print("📈 Извлечение данных из диапазона M4:AB...")
             
-            # Рассчитываем ADS
-            print("📊 Расчет ADS...")
-            df_final['ads'] = df_final['total_sales'] / 365
+            sales_data_list = []
             
-            # Убираем дубликаты по номенклатуре (если есть)
-            initial_final_count = len(df_final)
-            df_final = df_final.drop_duplicates(subset=['номенклатура'], keep='first')
-            duplicates_removed = initial_final_count - len(df_final)
+            for idx in valid_indices:
+                item_name = str(nomenclature_clean.loc[idx]).strip()
+                
+                # Извлекаем данные из колонок M:AB для данной строки
+                row_sales_data = df.iloc[idx, start_col_index:end_col_index].copy()
+                
+                # Преобразуем в числовой формат, заменяя NaN и пустые на 0
+                row_sales_numeric = pd.to_numeric(row_sales_data, errors='coerce').fillna(0)
+                
+                # НОВАЯ ФОРМУЛА РАСЧЕТА ADS:
+                # 1. Получаем среднее значение от M4:AB4
+                average_value = row_sales_numeric.mean()
+                
+                # 2. Делим среднее значение на 30
+                ads_value = average_value / 30
+                
+                sales_data_list.append({
+                    'номенклатура': item_name,
+                    'ads': ads_value,
+                    'average_value': average_value,
+                    'total_sales': row_sales_numeric.sum(),  # Для совместимости
+                    'monthly_data': row_sales_numeric.tolist()
+                })
             
-            if duplicates_removed > 0:
-                print(f"   Удалено дубликатов: {duplicates_removed}")
+            # Создаем DataFrame
+            ads_df = pd.DataFrame(sales_data_list)
             
-            # Сохраняем результат
-            self.sales_data = df_final
-            self.calculated_ads = df_final[['номенклатура', 'ads', 'total_sales']].copy()
+            # Сохраняем результаты в системе
+            self.sales_data = ads_df
+            self.calculated_ads = ads_df[['номенклатура', 'ads', 'average_value', 'total_sales']].copy()
             
-            # ИТОГОВАЯ СТАТИСТИКА
-            print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА ОБРАБОТКИ:")
-            print("=" * 50)
-            print(f"Исходно строк в файле: {initial_count}")
-            print(f"Потеряно на очистке номенклатуры: {total_lost_nomenclature}")
-            print(f"Потеряно на фильтрации количества: {lost_quantity}")
-            print(f"Удалено дубликатов: {duplicates_removed}")
-            print(f"ИТОГО товаров в результате: {len(df_final)}")
-            print(f"Общий ADS: {df_final['ads'].sum():.2f}")
-            print(f"Общее количество продаж: {df_final['total_sales'].sum():,.0f}")
+            # Создаем JSON данные для системы
+            json_output = {
+                'metadata': {
+                    'file_processed_at': pd.Timestamp.now().isoformat(),
+                    'total_items': len(ads_df),
+                    'nomenclature_column': 'B',
+                    'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
+                    'calculation_method': 'average_monthly_divided_by_30',
+                    'formula': 'ADS = (среднее от M4:AB4) / 30',
+                    'last_row_excluded': True
+                },
+                'summary_stats': {
+                    'total_ads': float(ads_df['ads'].sum()),
+                    'average_ads': float(ads_df['ads'].mean()),
+                    'max_ads': float(ads_df['ads'].max()),
+                    'min_ads': float(ads_df['ads'].min())
+                },
+                'items': [
+                    {
+                        'nomenclature': row['номенклатура'],
+                        'ads_daily': row['ads'],
+                        'average_monthly': row['average_value'],
+                        'total_period': row['total_sales'],
+                        'monthly_data': row['monthly_data']
+                    }
+                    for _, row in ads_df.iterrows()
+                ]
+            }
             
-            # Топ товары для проверки
-            print(f"\n🏆 Топ-5 товаров по продажам:")
-            top_sellers = df_final.nlargest(5, 'total_sales')
+            # Сохраняем JSON в системе
+            if not hasattr(self, '_json_data'):
+                self._json_data = {}
+            self._json_data['ads'] = json_output
+            
+            # Статистика
+            positive_ads_count = len(ads_df[ads_df['ads'] > 0])
+            
+            print(f"\n📊 РЕЗУЛЬТАТЫ ИСПРАВЛЕННОЙ ЛОГИКИ:")
+            print("=" * 60)
+            print(f"Номенклатура читается из: Колонка B")
+            print(f"Обработано товаров: {len(ads_df)}")
+            print(f"Диапазон: M{start_row+1}:AB{start_row+1+len(ads_df)}")
+            print(f"Формула: ADS = (среднее месячное) / 30")
+            print(f"Общий ADS: {ads_df['ads'].sum():.2f}")
+            print(f"Средний ADS: {ads_df['ads'].mean():.4f}")
+            print(f"Товаров с положительным ADS: {positive_ads_count}")
+            
+            # Топ товары
+            print(f"\n🏆 Топ-5 товаров по новому ADS:")
+            top_sellers = ads_df.nlargest(5, 'ads')
             for i, (_, row) in enumerate(top_sellers.iterrows(), 1):
-                print(f"  {i}. {row['номенклатура'][:60]:<60} | {row['total_sales']:>8,.0f}")
+                print(f"  {i}. {row['номенклатура'][:50]:<50} | ADS: {row['ads']:>8.4f}")
             
             return {
                 'success': True,
-                'total_items': len(df_final),
-                'quantity_column_used': quantity_column,
-                'total_quantity_sold': df_final['total_sales'].sum(),
-                'total_ads': df_final['ads'].sum(),
-                'avg_ads': df_final['ads'].mean(),
-                'processing_stats': {
-                    'initial_rows': initial_count,
-                    'lost_nomenclature': total_lost_nomenclature,
-                    'lost_quantity': lost_quantity,
-                    'duplicates_removed': duplicates_removed,
-                    'final_items': len(df_final)
-                },
-                'top_sellers': df_final.nlargest(5, 'ads')[['номенклатура', 'ads']].to_dict('records')
+                'total_items': len(ads_df),
+                'nomenclature_column': 'B',
+                'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
+                'calculation_method': 'average_monthly_divided_by_30_fixed',
+                'formula': 'ADS = (среднее от M4:AB4) / 30',
+                'total_ads': ads_df['ads'].sum(),
+                'average_ads': ads_df['ads'].mean(),
+                'items_with_positive_ads': positive_ads_count,
+                'json_data_created': True,
+                'last_row_excluded': True
             }
-            
         except Exception as e:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': f"Ошибка загрузки файла продаж: {str(e)}"}
 
+    def get_ads_json_data(self) -> str:
+        """
+        Получение ADS данных в формате JSON
+        Добавьте этот метод в класс ModularInventorySystem
+        """
+        if hasattr(self, '_json_data') and 'ads' in self._json_data:
+            import json
+            return json.dumps(self._json_data['ads'], ensure_ascii=False, indent=2)
+        else:
+            return json.dumps({
+                'error': 'JSON данные недоступны',
+                'message': 'Сначала обработайте файл ADS с новой логикой'
+            }, ensure_ascii=False, indent=2)
+
+    def save_ads_json_to_file(self, filename: str = None) -> str:
+        """
+        Сохранение ADS JSON данных в файл
+        Добавьте этот метод в класс ModularInventorySystem
+        """
+        import json
+        import pandas as pd
+        
+        if filename is None:
+            filename = f"ads_data_fixed_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        if not hasattr(self, '_json_data') or 'ads' not in self._json_data:
+            raise ValueError("Нет JSON данных для сохранения")
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(self._json_data['ads'], f, ensure_ascii=False, indent=2)
+        
+        print(f"💾 JSON данные сохранены в файл: {filename}")
+        return filename
+
+    def export_enhanced_results_with_fixed_ads(self) -> io.BytesIO:
+        """
+        Экспорт результатов с исправленной логикой ADS и JSON
+        Добавьте этот метод в класс ModularInventorySystem
+        """
+        if self.calculated_ads is None:
+            raise ValueError("Нет данных для экспорта")
+        
+        output = io.BytesIO()
+        
+        try:
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # 1. Основные результаты ADS с исправленной логикой
+                self.calculated_ads.to_excel(writer, sheet_name='ADS_Fixed_B_Column', index=False)
+                
+                # 2. Детальные данные с помесячной разбивкой
+                if hasattr(self, 'sales_data') and self.sales_data is not None:
+                    detailed_data = []
+                    for _, row in self.sales_data.iterrows():
+                        base_row = {
+                            'номенклатура': row['номенклатура'],
+                            'ads': row['ads'],
+                            'average_monthly': row['average_value'],
+                            'total_sales': row['total_sales']
+                        }
+                        
+                        # Добавляем помесячные данные если есть
+                        if 'monthly_data' in row and isinstance(row['monthly_data'], list):
+                            for i, month_val in enumerate(row['monthly_data']):
+                                base_row[f'month_{i+1}'] = month_val
+                        
+                        detailed_data.append(base_row)
+                    
+                    detailed_df = pd.DataFrame(detailed_data)
+                    detailed_df.to_excel(writer, sheet_name='Monthly_Data_B_Column', index=False)
+                
+                # 3. JSON данные как текст
+                if hasattr(self, '_json_data') and 'ads' in self._json_data:
+                    json_text = self.get_ads_json_data()
+                    json_df = pd.DataFrame([{'JSON_ADS_Data': json_text}])
+                    json_df.to_excel(writer, sheet_name='JSON_ADS_Data', index=False)
+                
+                # 4. Методология и исправления
+                methodology = pd.DataFrame([{
+                    'Original_Issue': 'Номенклатура читалась из колонки A',
+                    'Fixed_Version': 'Номенклатура читается из колонки B',
+                    'Formula': 'ADS = (среднее от M4:AB4) / 30',
+                    'Range': 'M4:AB4 до последнего товара',
+                    'Exclusions': 'Последняя строка исключается',
+                    'JSON_Conversion': 'Да, автоматически',
+                    'Processing_Date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'Fix_Version': 'B_Column_Fix_v1.0'
+                }])
+                methodology.to_excel(writer, sheet_name='Fix_Methodology', index=False)
+                
+                # 5. Остальные данные системы (если есть)
+                if self.abc_results is not None:
+                    if 'abc_data_detailed' in self.abc_results:
+                        abc_df = self.abc_results['abc_data_detailed']
+                        abc_df.to_excel(writer, sheet_name='ABC_Analysis', index=False)
+                
+                if self.calculated_min_stock is not None:
+                    self.calculated_min_stock.to_excel(writer, sheet_name='Min_Stock', index=False)
+                
+                if self.stock_comparison is not None:
+                    self.stock_comparison.to_excel(writer, sheet_name='Stock_Comparison', index=False)
+            
+            output.seek(0)
+            print("📤 Excel файл с исправленной логикой ADS создан успешно!")
+            return output
+            
+        except Exception as e:
+            raise Exception(f"Ошибка экспорта с исправленной логикой: {str(e)}")
+    
     def _find_quantity_column_improved(self, df: pd.DataFrame, branch_name: str) -> str:
         """
         УЛУЧШЕННЫЙ поиск колонки с количеством продаж в файле

@@ -3,7 +3,8 @@
 """
 Модульное Streamlit приложение для системы анализа товарных запасов v3.0
 """
-
+import json
+import numpy as np
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -212,54 +213,105 @@ def abc_analysis_page(system):
                 else:
                     st.error(f"❌ {load_result['error']}")
 
-def ads_calculation_page(system):
-    """Страница расчета ADS с поддержкой множественных файлов"""
-    st.header("📊 Расчет ADS (Среднедневные продажи)")
+def ads_calculation_page_updated(system):
+    """Обновленная страница расчета ADS с исправленной логикой"""
+    st.header("📊 Расчет ADS (ОБНОВЛЕННАЯ ЛОГИКА)")
     
     st.markdown("""
-    **ADS (Average Daily Sales)** - ключевой показатель для планирования запасов.
-    Рассчитывается на основе исторических данных продаж по всем филиалам.
-    
-    📁 **Множественная загрузка**: Вы можете загрузить несколько файлов продаж от разных филиалов/складов.
+    **🔢 НОВАЯ ФОРМУЛА ADS:**
+    - **Номенклатура:** Читается из колонки B (ИСПРАВЛЕНО!)
+    - **Диапазон данных:** M4:AB4 до последнего товара
+    - **Формула:** ADS = (среднее значение от M4:AB4) / 30
+    - **Исключения:** Последняя строка автоматически исключается
+    - **JSON:** Автоматическая конвертация включена
     """)
+    
+    # Показываем структуру файла
+    with st.expander("📋 Требуемая структура Excel файла"):
+        st.markdown("""
+        ```
+        Колонка A: Коды товаров (не используется)
+        Колонка B: НОМЕНКЛАТУРА ТОВАРОВ (основная)
+        Колонки M-AB: Месячные данные продаж
+        Строка 4: Начало данных
+        Последняя строка: Исключается автоматически
+        ```
+        """)
     
     status = system.get_system_status()
     
     if status['sales_analysis']['ads_calculated']:
         # ADS уже рассчитан
-        st.success("✅ ADS рассчитан!")
+        st.success("✅ ADS рассчитан с ИСПРАВЛЕННОЙ логикой!")
         
         ads_data = system.calculated_ads
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Товаров", len(ads_data))
-        with col2:
-            st.metric("Общий ADS", f"{ads_data['ads'].sum():.1f}")
-        with col3:
-            st.metric("Средний ADS", f"{ads_data['ads'].mean():.2f}")
+        # Показываем информацию о методе
+        if hasattr(system, '_json_data') and 'ads' in system._json_data:
+            metadata = system._json_data['ads']['metadata']
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Товаров", len(ads_data))
+            with col3:
+                st.metric("Общий ADS", f"{ads_data['ads'].sum():.2f}")
+            with col4:
+                st.metric("Средний ADS", f"{ads_data['ads'].mean():.4f}")
+            
+            # Показываем детали обработки
+            st.subheader("📊 Детали обработки")
+            
+            info_col1, info_col2 = st.columns(2)
+            
+            with info_col1:
+                st.info(f"""
+                **Параметры обработки:**
+                - Диапазон: {metadata.get('range_used', 'M4:AB4')}
+                - Формула: {metadata.get('formula', 'ADS = среднее/30')}
+                - Метод: {metadata.get('calculation_method', 'новый')}
+                """)
+            
+            with info_col2:
+                st.info(f"""
+                **Статистика:**
+                - Обработано: {metadata.get('total_items', 0)} товаров
+                - С положительным ADS: {metadata.get('items_with_positive_ads', 0)}
+                - Последняя строка исключена: {'✅' if metadata.get('last_row_excluded') else '❌'}
+                """)
         
-        # Показываем информацию о филиалах, если есть
-        if hasattr(system, 'sales_files_data') and system.sales_files_data:
-            st.subheader("🏪 Статистика по филиалам")
-            
-            branch_stats = []
-            for branch, data in system.sales_files_data.items():
-                if data['success']:
-                    # Используем новые названия колонок с проверкой
-                    avg_monthly = data.get('avg_monthly_sales', data.get('total_quantity_sold', 0))
+        # JSON данные
+        st.subheader("📄 JSON данные")
+        
+        if st.button("📄 Показать JSON данные", key="show_json"):
+            try:
+                json_data = system.get_ads_json_data()
+                
+                # Показываем превью JSON
+                st.subheader("📄 JSON превью")
+                json_preview = json.loads(json_data)
+                
+                # Метаданные
+                if 'metadata' in json_preview:
+                    st.write("**Метаданные:**")
+                    st.json(json_preview['metadata'])
+                
+                # Статистика
+                if 'summary_stats' in json_preview:
+                    st.write("**Статистика:**")
+                    st.json(json_preview['summary_stats'])
+                
+                # Первые несколько товаров
+                if 'items' in json_preview and len(json_preview['items']) > 0:
+                    st.write("**Первые 3 товара:**")
+                    st.json(json_preview['items'][:3])
+                
+                # Кнопка скачивания JSON
+                if st.button("💾 Скачать JSON файл"):
+                    json_filename = system.save_ads_json_to_file()
+                    st.success(f"✅ JSON сохранен в файл: {json_filename}")
                     
-                    branch_stats.append({
-                        'Филиал': branch,
-                        'Товаров': data['total_items'],
-                        'Среднемесячные продажи': f"{avg_monthly:,.0f}",
-                        'ADS филиала': f"{data['total_ads']:.1f}",
-                        'Метод расчета': data.get('calculation_method', 'неизвестно')
-                    })
-            
-            if branch_stats:
-                branch_df = pd.DataFrame(branch_stats)
-                st.dataframe(branch_df, use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Ошибка отображения JSON: {str(e)}")
         
         # Топ товары по ADS
         st.subheader("🏆 Топ товары по ADS")
@@ -270,7 +322,8 @@ def ads_calculation_page(system):
             x='ads',
             y='номенклатура',
             orientation='h',
-            title='Топ-10 товаров по среднедневным продажам (все филиалы)'
+            title='Топ-10 товаров по ADS (исправленная логика)',
+            labels={'ads': 'ADS', 'номенклатура': 'Товар'}
         )
         st.plotly_chart(fig_ads, use_container_width=True)
         
@@ -278,133 +331,231 @@ def ads_calculation_page(system):
         with st.expander("📋 Детальные данные ADS"):
             st.dataframe(ads_data, use_container_width=True)
         
-        # Кнопка для перезагрузки
-        if st.button("🔄 Загрузить новые файлы продаж"):
-            system.sales_data = None
-            system.calculated_ads = None
-            system.sales_files_data = {}
-            system.combined_sales_data = None
-            st.rerun()
+        # Кнопки для экспорта
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📤 Экспорт в Excel с JSON", key="export_excel_json"):
+                try:
+                    excel_buffer = system.export_enhanced_results_with_fixed_ads()
+                    
+                    st.download_button(
+                        label="💾 Скачать Excel с исправленной логикой",
+                        data=excel_buffer,
+                        file_name=f"ads_fixed_results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    
+                except Exception as e:
+                    st.error(f"❌ Ошибка экспорта: {str(e)}")
+        
+        with col2:
+            if st.button("🔄 Загрузить новый файл", key="reload_ads"):
+                # Очищаем данные для новой загрузки
+                system.sales_data = None
+                system.calculated_ads = None
+                if hasattr(system, '_json_data'):
+                    system._json_data.pop('ads', None)
+                st.rerun()
     
     else:
         # ADS не рассчитан
-        st.info("Загрузите файлы с данными продаж по филиалам")
+        st.info("Загрузите файл с данными продаж для расчета ADS по новой логике")
         
-        # Выбор режима загрузки
-        upload_mode = st.radio(
-            "Режим загрузки:",
-            ["📁 Один файл", "📁 Множественные файлы"],
-            help="Выберите один файл или загрузите несколько файлов от разных филиалов"
+        st.warning("""
+        ⚠️ **ВАЖНО: Проверьте структуру файла!**
+        
+        - Номенклатура должна быть в **колонке B**
+        - Данные продаж в колонках M-AB
+        - Данные начинаются с 4-й строки
+        """)
+        
+        sales_file = st.file_uploader(
+            "Выберите файл продаж",
+            type=['xlsx', 'xls'],
+            help="Файл должен содержать номенклатуру в колонке B и данные продаж в колонках M-AB",
+            key="sales_file_updated"
         )
         
-        if upload_mode == "📁 Один файл":
-            # Режим одного файла (старая логика)
-            sales_file = st.file_uploader(
-                "Выберите файл продаж",
-                type=['xlsx', 'xls'],
-                help="Файл должен содержать данные продаж по месяцам или общее количество"
-            )
-            
-            if sales_file is not None:
-                with st.spinner("Обработка данных продаж..."):
-                    load_result = system.load_sales_file(sales_file)
+        if sales_file is not None:
+            with st.spinner("Обработка файла с ИСПРАВЛЕННОЙ логикой ADS..."):
+                # Используем обновленный метод
+                load_result = system.load_sales_file_updated(sales_file)
+                
+                if load_result['success']:
+                    st.success(f"✅ ADS рассчитан для {load_result['total_items']} товаров")
                     
-                    if load_result['success']:
-                        st.success(f"✅ ADS рассчитан для {load_result['total_items']} товаров")
-                        
-                        # Показываем какая колонка использовалась
-                        if 'quantity_column_used' in load_result:
-                            st.info(f"📊 Использована колонка: {load_result['quantity_column_used']}")
-                        
-                        # Показываем статистику в зависимости от типа данных
-                        if 'total_quantity_sold' in load_result:
-                            st.metric("Общее количество продаж", f"{load_result['total_quantity_sold']:,.0f} единиц")
-                            st.metric("Общий ADS", f"{load_result['total_ads']:.1f} единиц/день")
-                        else:
-                            st.warning("⚠️ Возможно, используются денежные суммы вместо количества товаров")
-                        
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {load_result['error']}")
-        
-        else:
-            # Режим множественных файлов
-            st.markdown("### 📁 Загрузка файлов по филиалам")
-            st.markdown("Загрузите файлы продаж для каждого филиала/склада:")
-            
-            # Множественная загрузка файлов
-            uploaded_files = st.file_uploader(
-                "Выберите файлы продаж",
-                type=['xlsx', 'xls'],
-                accept_multiple_files=True,
-                help="Загрузите все файлы продаж от разных филиалов одновременно"
-            )
-            
-            if uploaded_files:
-                st.write(f"📁 Загружено файлов: {len(uploaded_files)}")
-                
-                # Показываем список файлов
-                with st.expander("📋 Список загруженных файлов"):
-                    for i, file in enumerate(uploaded_files, 1):
-                        st.write(f"{i}. {file.name} ({file.size / 1024 / 1024:.1f} MB)")
-                
-                if st.button("🔄 Обработать все файлы"):
-                    with st.spinner("Обработка множественных файлов продаж..."):
-                        # Подготавливаем словарь файлов
-                        files_dict = {}
-                        for file in uploaded_files:
-                            # Извлекаем название филиала из имени файла
-                            branch_name = _extract_branch_name(file.name)
-                            files_dict[branch_name] = file
-                        
-                        # Обрабатываем все файлы
-                        load_result = system.load_multiple_sales_files(files_dict)
-                        
-                        if load_result['success']:
-                            st.success(f"✅ Обработано {load_result['files_processed']} из {load_result['total_files']} файлов")
-                            
-                            # Показываем общую статистику
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Уникальных товаров", load_result['combined_items'])
-                            with col2:
-                                if 'total_avg_monthly_sales' in load_result:
-                                    st.metric("Общие среднемесячные", f"{load_result['total_avg_monthly_sales']:,.0f}")
-                                else:
-                                    st.metric("Общее количество", f"{load_result.get('total_quantity_all_branches', 0):,.0f}")
-                            with col3:
-                                st.metric("Общий ADS", f"{load_result['total_ads_all_branches']:.1f}")
-                            
-                            # Показываем результаты по филиалам
-                            st.subheader("📊 Результаты по филиалам")
-                            branch_results = []
-                            for branch, result in load_result['branch_results'].items():
-                                if result['success']:
-                                    branch_results.append({
-                                        'Филиал': branch,
-                                        'Статус': '✅ Успешно',
-                                        'Товаров': result['total_items'],
-                                        'Среднемесячные': f"{result.get('avg_monthly_sales', 0):,.0f}",
-                                        'ADS': f"{result['total_ads']:.1f}",
-                                        'Месяцев': result.get('monthly_columns_found', 0)
-                                    })
-                                else:
-                                    branch_results.append({
-                                        'Филиал': branch,
-                                        'Статус': '❌ Ошибка',
-                                        'Товаров': 0,
-                                        'Среднемесячные': result['error'][:30] + "...",
-                                        'ADS': 0,
-                                        'Месяцев': 0
-                                    })
-                            
-                            results_df = pd.DataFrame(branch_results)
-                            st.dataframe(results_df, use_container_width=True)
-                            
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {load_result['error']}")
+                    # Показываем детали результата
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Товаров", load_result['total_items'])
+                    with col2:
+                        st.metric("Номенклатура из", load_result['nomenclature_column'])
+                    with col3:
+                        st.metric("Общий ADS", f"{load_result['total_ads']:.2f}")
+                    with col4:
+                        st.metric("JSON создан", "✅" if load_result['json_data_created'] else "❌")
+                    
+                    # Информация о обработке
+                    st.info(f"""
+                    **Результаты обработки:**
+                    - Формула: {load_result['formula']}
+                    - Диапазон: {load_result['range_used']}
+                    - Последняя строка исключена: {'✅' if load_result['last_row_excluded'] else '❌'}
+                    - С положительным ADS: {load_result['items_with_positive_ads']} товаров
+                    """)
+                    
+                    st.rerun()
+                else:
+                    st.error(f"❌ {load_result['error']}")
 
+def show_ads_comparison(old_ads_data, new_ads_data):
+    """Функция для сравнения старых и новых результатов ADS"""
+    
+    st.subheader("📊 Сравнение старой и новой логики ADS")
+    
+    if old_ads_data is not None and new_ads_data is not None:
+        # Объединяем данные для сравнения
+        comparison_df = pd.merge(
+            old_ads_data[['номенклатура', 'ads']].rename(columns={'ads': 'ads_old'}),
+            new_ads_data[['номенклатура', 'ads']].rename(columns={'ads': 'ads_new'}),
+            on='номенклатура',
+            how='outer'
+        ).fillna(0)
+        
+        # Рассчитываем разности
+        comparison_df['ads_diff'] = comparison_df['ads_new'] - comparison_df['ads_old']
+        comparison_df['ads_diff_percent'] = np.where(
+            comparison_df['ads_old'] > 0,
+            (comparison_df['ads_diff'] / comparison_df['ads_old'] * 100),
+            0
+        )
+        
+        # Статистика сравнения
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            correlation = comparison_df[['ads_old', 'ads_new']].corr().iloc[0, 1]
+            st.metric("Корреляция", f"{correlation:.3f}")
+        
+        with col2:
+            mean_diff = comparison_df['ads_diff'].mean()
+            st.metric("Средняя разность", f"{mean_diff:.4f}")
+        
+        with col3:
+            mean_diff_percent = comparison_df['ads_diff_percent'].mean()
+            st.metric("Средняя разность %", f"{mean_diff_percent:.1f}%")
+        
+        with col4:
+            items_changed = len(comparison_df[abs(comparison_df['ads_diff_percent']) > 5])
+            st.metric("Изменения >5%", items_changed)
+        
+        # График сравнения
+        fig_comparison = px.scatter(
+            comparison_df,
+            x='ads_old',
+            y='ads_new',
+            title='Сравнение старой и новой логики ADS',
+            labels={'ads_old': 'ADS (старая логика)', 'ads_new': 'ADS (новая логика)'},
+            hover_data=['номенклатура', 'ads_diff_percent']
+        )
+        
+        # Добавляем линию y=x для идеального соответствия
+        min_val = min(comparison_df['ads_old'].min(), comparison_df['ads_new'].min())
+        max_val = max(comparison_df['ads_old'].max(), comparison_df['ads_new'].max())
+        fig_comparison.add_shape(
+            type="line",
+            x0=min_val, y0=min_val,
+            x1=max_val, y1=max_val,
+            line=dict(color="red", dash="dash")
+        )
+        
+        st.plotly_chart(fig_comparison, use_container_width=True)
+        
+        # Таблица с наибольшими изменениями
+        st.subheader("📋 Товары с наибольшими изменениями")
+        
+        top_changes = comparison_df.reindex(
+            comparison_df['ads_diff_percent'].abs().sort_values(ascending=False).index
+        ).head(10)
+        
+        st.dataframe(
+            top_changes[['номенклатура', 'ads_old', 'ads_new', 'ads_diff', 'ads_diff_percent']],
+            use_container_width=True
+        )
+    
+    else:
+        st.warning("Недостаточно данных для сравнения")
+
+def add_json_export_section(system):
+    """Добавить секцию для работы с JSON данными"""
+    
+    st.subheader("📄 Работа с JSON данными")
+    
+    if hasattr(system, '_json_data') and 'ads' in system._json_data:
+        
+        # Информация о JSON
+        json_data = system._json_data['ads']
+        metadata = json_data.get('metadata', {})
+        
+        st.info(f"""
+        **JSON статистика:**
+        - Товаров: {metadata.get('total_items', 0)}
+        - Метод: {metadata.get('calculation_method', 'неизвестно')}
+        - Формула: {metadata.get('formula', 'неизвестно')}
+        - Обработка: {metadata.get('file_processed_at', 'неизвестно')}
+        """)
+        
+        # Кнопки для работы с JSON
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("👁️ Просмотр JSON"):
+                st.json(json_data)
+        
+        with col2:
+            if st.button("💾 Сохранить JSON"):
+                try:
+                    filename = system.save_ads_json_to_file()
+                    st.success(f"✅ Сохранено: {filename}")
+                except Exception as e:
+                    st.error(f"❌ Ошибка: {str(e)}")
+        
+        with col3:
+            # Создаем JSON для скачивания
+            json_str = system.get_ads_json_data()
+            st.download_button(
+                label="⬇️ Скачать JSON",
+                data=json_str.encode('utf-8'),
+                file_name=f"ads_data_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.json",
+                mime="application/json"
+            )
+        
+        # API интеграция (пример)
+        with st.expander("🔌 API интеграция"):
+            st.markdown("""
+            **Пример использования JSON в API:**
+            
+            ```python
+            import requests
+            import json
+            
+            # Получение JSON данных
+            json_data = system.get_ads_json_data()
+            data = json.loads(json_data)
+            
+            # Отправка в API
+            response = requests.post(
+                'https://api.company.com/ads',
+                json=data,
+                headers={'Content-Type': 'application/json'}
+            )
+            ```
+            """)
+    
+    else:
+        st.warning("JSON данные недоступны. Сначала обработайте файл ADS.")
 def min_stock_calculation_page(system):
     """Страница расчета минимальных запасов"""
     st.header("📋 Расчет минимальных запасов")
@@ -864,7 +1015,7 @@ def main():
     if page == "🔤 ABC анализ":
         abc_analysis_page(system)
     elif page == "📊 ADS расчет":
-        ads_calculation_page(system)
+        ads_calculation_page_updated(system)
     elif page == "📋 MIN запасы":
         min_stock_calculation_page(system)
     elif page == "⚖️ Сравнение остатков":

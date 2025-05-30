@@ -1116,7 +1116,12 @@ def main():
     """Основная функция приложения"""
     # Инициализация системы
     system = init_system()
-    
+    if system.calculated_ads is not None:
+        # Получаем русифицированные данные
+        russian_dfs = system.export_russian_dataframes()
+        
+        st.subheader("📊 ADS Расчеты")
+        st.dataframe(russian_dfs['ADS_расчеты'], use_container_width=True)
     # Заголовок
     st.title("📦 Модульная система анализа товарных запасов")
     st.markdown("*Пошаговый анализ с выбором типа операции*")

@@ -1536,317 +1536,66 @@ class ModularInventorySystem:
             if key in self.default_params:
                 self.default_params[key] = value
     
-    def export_enhanced_results_russian(self) -> io.BytesIO:
-        """
-        Экспорт результатов с русскими заголовками
-        """
-        if self.calculated_ads is None:
-            raise ValueError("Нет данных для экспорта")
-        
-        output = io.BytesIO()
-        
-        try:
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                
-                # 1. Основные результаты ADS с русскими заголовками
-                if self.calculated_ads is not None:
-                    ads_df_russian = self.calculated_ads.copy()
-                    ads_df_russian.columns = ['Номенклатура', 'Среднедневные_продажи', 'Среднемесячные', 'Общие_продажи']
-                    ads_df_russian.to_excel(writer, sheet_name='ADS_Расчеты', index=False)
-                
-                # 2. ABC анализ с русскими заголовками
-                if self.abc_results is not None:
-                    abc_detailed = self.abc_results['abc_data_detailed'].copy()
-                    
-                    # Переименовываем колонки на русские
-                    column_mapping = {
-                        'nomenclature': 'Номенклатура',
-                        'subcategory': 'Подкатегория', 
-                        'category': 'Категория',
-                        'annual_sales': 'Годовые_продажи',
-                        'sales_percentage': 'Процент_продаж',
-                        'cumulative_percentage': 'Накопительный_процент',
-                        'abc_class': 'ABC_класс'
-                    }
-                    
-                    abc_detailed_russian = abc_detailed.rename(columns=column_mapping)
-                    abc_detailed_russian.to_excel(writer, sheet_name='ABC_Детально', index=False)
-                    
-                    # ABC анализ по категориям
-                    if self.abc_results['category_analysis']:
-                        category_df = pd.DataFrame.from_dict(
-                            self.abc_results['category_analysis'], 
-                            orient='index'
-                        )
-                        
-                        # Переименовываем индекс и колонки
-                        category_df.index.name = 'Категория'
-                        category_df.columns = [
-                            'Всего_товаров', 'Товары_с_продажами', 'Товары_без_продаж',
-                            'Общие_продажи', 'Процент_продаж', 'ABC_распределение',
-                            'Средние_продажи', 'Максимальные_продажи', 'Минимальные_продажи',
-                            'Топ_товары'
-                        ]
-                        category_df.to_excel(writer, sheet_name='ABC_по_категориям', index=True)
-                
-                # 3. Минимальные запасы с русскими заголовками
-                if self.calculated_min_stock is not None:
-                    min_stock_russian = self.calculated_min_stock.copy()
-                    
-                    min_stock_column_mapping = {
-                        'номенклатура': 'Номенклатура',
-                        'ads': 'Среднедневные_продажи',
-                        'ip_target_days': 'Дни_транзита',
-                        'min_stock_days': 'Дни_запаса',
-                        'transit_consumption': 'Транзитное_потребление',
-                        'min_stock_base': 'Базовый_минимум',
-                        'min_stock_total': 'Минимальный_запас_итого',
-                        'priority': 'Приоритет'
-                    }
-                    
-                    min_stock_russian = min_stock_russian.rename(columns=min_stock_column_mapping)
-                    min_stock_russian.to_excel(writer, sheet_name='Минимальные_запасы', index=False)
-                
-                # 4. Текущие остатки с русскими заголовками
-                if self.stock_data is not None:
-                    stock_russian = self.stock_data[['номенклатура', 'total_current_stock']].copy()
-                    stock_russian.columns = ['Номенклатура', 'Текущий_остаток']
-                    stock_russian.to_excel(writer, sheet_name='Текущие_остатки', index=False)
-                
-                # 5. Сравнение остатков с русскими заголовками
-                if self.stock_comparison is not None:
-                    comparison_russian = self.stock_comparison.copy()
-                    
-                    comparison_column_mapping = {
-                        'номенклатура': 'Номенклатура',
-                        'ads': 'Среднедневные_продажи',
-                        'min_stock_total': 'Минимальный_запас',
-                        'total_current_stock': 'Текущий_остаток',
-                        'stock_deficit': 'Дефицит',
-                        'current_stock_days': 'Дни_остатка',
-                        'status': 'Статус',
-                        'order_priority': 'Приоритет_заказа',
-                        'recommended_order': 'Рекомендуемый_заказ'
-                    }
-                    
-                    comparison_russian = comparison_russian.rename(columns=comparison_column_mapping)
-                    comparison_russian.to_excel(writer, sheet_name='Сравнение_остатков', index=False)
-                    
-                    # Товары с дефицитом
-                    deficit_items = comparison_russian[comparison_russian['Дефицит'] > 0]
-                    if not deficit_items.empty:
-                        deficit_items.to_excel(writer, sheet_name='Товары_с_дефицитом', index=False)
-                    
-                    # Критичные товары
-                    critical_items = comparison_russian[comparison_russian['Статус'] == 'КРИТИЧНО']
-                    if not critical_items.empty:
-                        critical_items.to_excel(writer, sheet_name='Критичные_товары', index=False)
-                    
-                    # Рекомендации по заказу
-                    order_recommendations = comparison_russian[
-                        comparison_russian['Рекомендуемый_заказ'] > 0
-                    ][['Номенклатура', 'Рекомендуемый_заказ', 'Приоритет_заказа', 
-                       'Среднедневные_продажи', 'Дни_остатка']]
-                    
-                    if not order_recommendations.empty:
-                        order_recommendations = order_recommendations.sort_values('Рекомендуемый_заказ', ascending=False)
-                        order_recommendations.to_excel(writer, sheet_name='Рекомендации_заказа', index=False)
-                
-                # 6. Общая сводка с русскими заголовками
-                summary_data = [{
-                    'Дата_анализа': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'),
-                    'Всего_товаров': len(self.calculated_ads) if self.calculated_ads is not None else 0,
-                    'ABC_выполнен': self.abc_results is not None,
-                    'Минимальные_запасы_рассчитаны': self.calculated_min_stock is not None,
-                    'Остатки_сравнены': self.stock_comparison is not None,
-                    'Версия_системы': 'Модульная система v3.0'
-                }]
-                
-                summary_df = pd.DataFrame(summary_data)
-                summary_df.to_excel(writer, sheet_name='Общая_сводка', index=False)
+    def get_russian_columns_mapping(self):
+        """Получение маппинга колонок для русификации"""
+        return {
+            # ABC анализ
+            'nomenclature': 'Номенклатура',
+            'category': 'Категория',
+            'subcategory': 'Подкатегория', 
+            'annual_sales': 'Годовые продажи',
+            'abc_class': 'ABC класс',
+            'sales_percentage': 'Процент продаж (%)',
+            'cumulative_percentage': 'Накопительный процент (%)',
             
-            output.seek(0)
-            return output
+            # ADS расчеты
+            'ads': 'Среднедневные продажи',
+            'total_sales': 'Общие продажи',
+            'average_value': 'Среднемесячные продажи',
             
-        except Exception as e:
-            raise Exception(f"Ошибка экспорта с русскими заголовками: {str(e)}")
+            # Минимальные запасы
+            'min_stock_total': 'Минимальный запас',
+            'min_stock_base': 'Базовый минимум',
+            'transit_consumption': 'Транзитное потребление',
+            'ip_target_days': 'Дни транзита',
+            'min_stock_days': 'Дни запаса',
+            'priority': 'Приоритет',
+            
+            # Остатки и сравнение
+            'total_current_stock': 'Текущий остаток',
+            'stock_deficit': 'Дефицит',
+            'current_stock_days': 'Дни остатка',
+            'status': 'Статус',
+            'recommended_order': 'Рекомендуемый заказ',
+            'order_priority': 'Приоритет заказа',
+            
+            # Заказы по филиалам
+            'branch': 'Филиал',
+            'pre_order': 'Предзаказ', 
+            'need': 'Потребность',
+            'days_supply': 'Дни запаса',
+            'active_assortment': 'Активный ассортимент'
+        }
 
-   # Русификация для Streamlit интерфейса
-    def display_abc_results_russian(abc_results, orders_df=None):
-        """
-        Отображение результатов ABC анализа с русскими заголовками
-        """
-        import streamlit as st
+    def export_russian_dataframes(self):
+        """Экспорт всех DataFrame с русскими заголовками"""
+        russian_mapping = self.get_russian_columns_mapping()
         
-        if abc_results:
-            st.subheader("📊 Результаты ABC анализа")
-            
-            # Общая статистика с русскими названиями
-            abc_summary = abc_results['abc_summary']
-            total_items = sum(abc_summary.values())
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                a_count = abc_summary.get('A', 0)
-                st.metric("🔴 A товары", f"{a_count} ({a_count/total_items*100:.1f}%)")
-            with col2:
-                b_count = abc_summary.get('B', 0)
-                st.metric("🟡 B товары", f"{b_count} ({b_count/total_items*100:.1f}%)")
-            with col3:
-                c_count = abc_summary.get('C', 0)
-                st.metric("🟢 C товары", f"{c_count} ({c_count/total_items*100:.1f}%)")
-            with col4:
-                st.metric("📦 Всего товаров", f"{total_items}")
-            
-            # Таблица по категориям с русскими заголовками
-            if 'category_analysis' in abc_results:
-                st.subheader("🏷️ Анализ по категориям")
-                
-                category_data = []
-                for cat, data in abc_results['category_analysis'].items():
-                    category_data.append({
-                        'Категория': cat,
-                        'Всего товаров': data['total_items'],
-                        'С продажами': data.get('items_with_sales', data['total_items']),
-                        'Без продаж': data.get('items_with_zero_sales', 0),
-                        'Общие продажи': f"{data['total_sales']:,.0f}",
-                        'Доля продаж (%)': f"{data['sales_percentage']:.2f}%",
-                        'A товары': data['abc_distribution']['A'],
-                        'B товары': data['abc_distribution']['B'],
-                        'C товары': data['abc_distribution']['C']
-                    })
-                
-                category_df = pd.DataFrame(category_data)
-                category_df = category_df.sort_values('Доля продаж (%)', ascending=False)
-                st.dataframe(category_df, use_container_width=True)
-
-    def display_orders_table_russian(orders_df):
-        """
-        Отображение таблицы заказов с русскими заголовками
-        """
-        import streamlit as st
+        results = {}
         
-        if orders_df is not None and not orders_df.empty:
-            st.subheader("📋 Детальные заказы")
-            
-            # Переименовываем колонки на русские
-            orders_russian = orders_df.copy()
-            
-            russian_columns = {
-                'nomenclature': 'Номенклатура',
-                'category': 'Категория',
-                'branch': 'Филиал',
-                'ads': 'Среднедневные продажи',
-                'min_stock': 'Минимальный запас',
-                'current_stock': 'Текущий остаток',
-                'stock_days': 'Дни остатка',
-                'transit_consumption': 'Транзитное потребление',
-                'need': 'Потребность',
-                'pre_order': 'Предзаказ',
-                'days_supply': 'Дни запаса',
-                'active_assortment': 'Активный ассортимент',
-                'transit_time': 'Транзитное время',
-                'abc_class': 'ABC класс'
-            }
-            
-            # Применяем переименование только для существующих колонок
-            columns_to_rename = {k: v for k, v in russian_columns.items() if k in orders_russian.columns}
-            orders_russian = orders_russian.rename(columns=columns_to_rename)
-            
-            # Фильтры с русскими названиями
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if 'Филиал' in orders_russian.columns:
-                    selected_branch = st.selectbox(
-                        "Выберите филиал:",
-                        options=['Все'] + list(orders_russian['Филиал'].unique()),
-                        key="filter_branch_russian"
-                    )
-            with col2:
-                if 'Категория' in orders_russian.columns:
-                    selected_category = st.selectbox(
-                        "Выберите категорию:",
-                        options=['Все'] + list(orders_russian['Категория'].unique()),
-                        key="filter_category_russian"
-                    )
-            with col3:
-                if 'ABC класс' in orders_russian.columns:
-                    selected_abc = st.selectbox(
-                        "ABC класс:",
-                        options=['Все'] + list(orders_russian['ABC класс'].unique()),
-                        key="filter_abc_russian"
-                    )
-            
-            # Применяем фильтры
-            filtered_df = orders_russian.copy()
-            
-            if 'Филиал' in orders_russian.columns and selected_branch != 'Все':
-                filtered_df = filtered_df[filtered_df['Филиал'] == selected_branch]
-            if 'Категория' in orders_russian.columns and selected_category != 'Все':
-                filtered_df = filtered_df[filtered_df['Категория'] == selected_category]
-            if 'ABC класс' in orders_russian.columns and selected_abc != 'Все':
-                filtered_df = filtered_df[filtered_df['ABC класс'] == selected_abc]
-            
-            # Отображаем таблицу
-            st.dataframe(filtered_df, use_container_width=True)
-            
-            if len(filtered_df) != len(orders_russian):
-                st.info(f"Показано {len(filtered_df)} из {len(orders_russian)} позиций")
-
-    def create_russian_summary_stats(system):
-        """
-        Создание сводной статистики с русскими названиями
-        """
-        summary_stats = {}
+        if self.calculated_ads is not None:
+            results['ADS_расчеты'] = self.calculated_ads.rename(columns=russian_mapping)
         
-        # ABC анализ
-        if system.abc_results:
-            abc_summary = system.abc_results['abc_summary']
-            total_abc_items = sum(abc_summary.values())
-            
-            summary_stats['ABC анализ'] = {
-                'Всего товаров': total_abc_items,
-                'A товары': abc_summary.get('A', 0),
-                'B товары': abc_summary.get('B', 0),
-                'C товары': abc_summary.get('C', 0),
-                'Общие продажи': system.abc_results.get('total_sales', 0),
-                'Товары без продаж': system.abc_results.get('items_with_zero_sales', 0)
-            }
+        if self.abc_results is not None and 'abc_data_detailed' in self.abc_results:
+            results['ABC_детально'] = self.abc_results['abc_data_detailed'].rename(columns=russian_mapping)
         
-        # ADS расчеты
-        if system.calculated_ads is not None:
-            summary_stats['ADS расчеты'] = {
-                'Всего товаров': len(system.calculated_ads),
-                'Общий ADS': system.calculated_ads['ads'].sum(),
-                'Средний ADS': system.calculated_ads['ads'].mean(),
-                'Максимальный ADS': system.calculated_ads['ads'].max()
-            }
+        if self.calculated_min_stock is not None:
+            results['Минимальные_запасы'] = self.calculated_min_stock.rename(columns=russian_mapping)
         
-        # Минимальные запасы
-        if system.calculated_min_stock is not None:
-            summary_stats['Минимальные запасы'] = {
-                'Всего товаров': len(system.calculated_min_stock),
-                'Общий минимальный запас': system.calculated_min_stock['min_stock_total'].sum(),
-                'Транзитное потребление': system.calculated_min_stock['transit_consumption'].sum(),
-                'Дни запаса': system.calculated_min_stock['min_stock_days'].iloc[0] if len(system.calculated_min_stock) > 0 else 0
-            }
+        if self.stock_comparison is not None:
+            results['Сравнение_остатков'] = self.stock_comparison.rename(columns=russian_mapping)
         
-        # Сравнение остатков
-        if system.stock_comparison is not None:
-            total_items = len(system.stock_comparison)
-            deficit_items = len(system.stock_comparison[system.stock_comparison['stock_deficit'] > 0])
-            critical_items = len(system.stock_comparison[system.stock_comparison['status'] == 'КРИТИЧНО'])
-            
-            summary_stats['Сравнение остатков'] = {
-                'Всего товаров': total_items,
-                'Товары с дефицитом': deficit_items,
-                'Критичные товары': critical_items,
-                'Процент дефицита': (deficit_items / total_items * 100) if total_items > 0 else 0,
-                'Общий дефицит': system.stock_comparison['stock_deficit'].sum(),
-                'Рекомендуемый заказ': system.stock_comparison['recommended_order'].sum()
-            }
-        
-        return summary_stats
+        return results
 
     def get_recommendations(self) -> List[str]:
         """

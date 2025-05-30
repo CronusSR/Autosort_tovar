@@ -10,6 +10,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from modular_inventory_system import ModularInventorySystem
+from integration_patch import add_multiple_files_interface_to_existing
 import io
 import time
 import warnings
@@ -372,8 +373,17 @@ def create_zero_sales_visualization(abc_data):
     
     return fig
 def ads_calculation_page_updated(system):
+
     st.header("📊 Расчет ADS")
     
+    try:
+        from integration_patch import add_multiple_files_interface_to_existing
+        
+        if add_multiple_files_interface_to_existing():
+            return  # Если используются множественные файлы, выходим
+    except Exception as e:
+        st.error(f"Ошибка загрузки множественных файлов: {e}")
+        
     st.markdown("""
     **🔢 ФОРМУЛА ADS:**
     - **Номенклатура:** Читается из колонки B 
@@ -491,7 +501,7 @@ def ads_calculation_page_updated(system):
             # Маппинг колонок для ADS
             ads_mapping = {
                 'номенклатура': 'Номенклатура',
-                'ads': 'Среднедневные продажи',
+                'ads': 'ADS',
                 'average_value': 'Среднемесячные продажи',
                 'total_sales': 'Общие продажи за период'
             }
@@ -1136,12 +1146,6 @@ def main():
     """Основная функция приложения"""
     # Инициализация системы
     system = init_system()
-    if system.calculated_ads is not None:
-        # Получаем русифицированные данные
-        russian_dfs = system.export_russian_dataframes()
-        
-        st.subheader("📊 ADS Расчеты")
-        st.dataframe(russian_dfs['ADS_расчеты'], use_container_width=True)
     # Заголовок
     st.title("📦 Модульная система анализа товарных запасов")
     st.markdown("*Пошаговый анализ с выбором типа операции*")

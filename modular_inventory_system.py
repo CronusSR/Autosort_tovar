@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Модульный обработчик данных для системы анализа товарных запасов v3.0
+Модульный обработчик данных для системы анализа товарных запасов 
 Поддерживает пошаговый анализ с выбором типа операции
 """
 
@@ -29,24 +29,20 @@ class ModularInventorySystem:
         self.calculated_min_stock = None
         self.stock_comparison = None
         
-        # Множественные файлы продаж
-        self.sales_files_data = {}  # Хранилище данных по филиалам
+        # Данные для множественных файлов
+        self.multiple_files_data = {}  # Хранилище по филиалам
         self.combined_sales_data = None
+        self.is_multiple_files_mode = False
+        self.processing_log = []
         
         # Параметры по умолчанию
         self.default_params = {
-            'ip_target_days': 7,    # Транзитное время
-            'min_stock_days': 30,   # Дни запаса
-            'safety_factor': 1.0    # Коэффициент безопасности
+            'ip_target_days': 7,
+            'min_stock_days': 30,
+            'safety_factor': 1.0
         }
     
     def load_sales_file_updated(self, file_content) -> Dict:
-        """
-        ОБНОВЛЕННАЯ загрузка файла продаж с новой логикой ADS
-        НОМЕНКЛАТУРА: Колонка B (индекс 1) - ИСПРАВЛЕНО!
-        ДИАПАЗОН: M4:AB4 до последнего товара (исключая последнюю строку)
-        ФОРМУЛА: ADS = (среднее от M4:AB4) / 30
-        """
         try:
             print("🔄 Обработка файла с ИСПРАВЛЕННОЙ логикой ADS (номенклатура в колонке B)...")
         

@@ -56,6 +56,7 @@ def _extract_branch_name(filename: str) -> str:
         # Если не удалось определить, используем имя файла
         return name.replace(' ', '_').replace('-', '_')
 
+
 def init_system():
     """Инициализация системы"""
     if 'inventory_system' not in st.session_state:
@@ -252,8 +253,13 @@ def abc_analysis_page_updated(system):
                         c_with_sales = sales_only_summary.get('C', 0)
                         st.metric("C (только с продажами)", c_with_sales)
                     
+                    items_display = items_with_sales_only[['nomenclature', 'category', 'annual_sales', 'abc_class']].head(20).copy()
+            
+                    # Переименовываем колонки на русские
+                    items_display.columns = ['Номенклатура', 'Категория', 'Годовые продажи', 'ABC класс']
+                    
                     st.dataframe(
-                        items_with_sales_only[['nomenclature', 'category', 'annual_sales', 'abc_class']].head(20),
+                        items_display,
                         use_container_width=True
                     )
     
@@ -366,7 +372,6 @@ def create_zero_sales_visualization(abc_data):
     
     return fig
 def ads_calculation_page_updated(system):
-    """Обновленная страница расчета ADS"""
     st.header("📊 Расчет ADS")
     
     st.markdown("""
@@ -467,20 +472,35 @@ def ads_calculation_page_updated(system):
         # Топ товары по ADS
         st.subheader("🏆 Топ товары по ADS")
         top_ads = ads_data.nlargest(10, 'ads')
-        
+
         fig_ads = px.bar(
             top_ads,
             x='ads',
             y='номенклатура',
             orientation='h',
-            title='Топ-10 товаров по ADS (исправленная логика)',
-            labels={'ads': 'ADS', 'номенклатура': 'Товар'}
+            title='Топ-10 товаров по ADS',
+            labels={'ads': 'Среднедневные продажи', 'номенклатура': 'Товар'}  # Русифицируем подписи осей
         )
         st.plotly_chart(fig_ads, use_container_width=True)
         
         # Детальная таблица
         with st.expander("📋 Детальные данные ADS"):
-            st.dataframe(ads_data, use_container_width=True)
+            # Русифицируем колонки ADS данных
+            ads_data_russian = ads_data.copy()
+            
+            # Маппинг колонок для ADS
+            ads_mapping = {
+                'номенклатура': 'Номенклатура',
+                'ads': 'Среднедневные продажи',
+                'average_value': 'Среднемесячные продажи',
+                'total_sales': 'Общие продажи за период'
+            }
+            
+            # Переименовываем только существующие колонки
+            existing_mappings = {k: v for k, v in ads_mapping.items() if k in ads_data_russian.columns}
+            ads_data_russian = ads_data_russian.rename(columns=existing_mappings)
+     
+            st.dataframe(ads_data_russian, use_container_width=True)
         
         # Кнопки для экспорта
         col1, col2 = st.columns(2)

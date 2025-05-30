@@ -101,15 +101,17 @@ def show_system_status(system):
     st.progress(progress / 100)
     st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/4 этапов)")
 
-def abc_analysis_page(system):
-    """Страница ABC анализа"""
-    st.header("🔤 ABC анализ товаров")
+def abc_analysis_page_updated(system):
+    """Обновленная страница ABC анализа с поддержкой товаров с нулевыми продажами"""
+    st.header("🔤 ABC анализ товаров (включая товары с нулевыми продажами)")
     
     st.markdown("""
     **ABC анализ** помогает классифицировать товары по принципу Парето (80/20):
     - **A товары** - 80% продаж (обычно 20% товаров)
     - **B товары** - 15% продаж  
-    - **C товары** - 5% продаж
+    - **C товары** - 5% продаж + **все товары с нулевыми продажами**
+    
+    ✅ **Новое**: Товары с пустыми ячейками продаж автоматически получают значение 0 и класс C
     """)
     
     # Проверяем статус ABC анализа
@@ -124,7 +126,12 @@ def abc_analysis_page(system):
         abc_summary = abc_results['abc_summary']
         total_items = sum(abc_summary.values())
         
-        col1, col2, col3 = st.columns(3)
+        # Проверяем наличие информации о нулевых продажах
+        zero_sales_count = abc_results.get('items_with_zero_sales', 0)
+        items_with_sales = abc_results.get('items_with_sales', total_items)
+        
+        # Расширенная статистика
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             a_count = abc_summary.get('A', 0)
             st.metric("A товары", f"{a_count} ({a_count/total_items*100:.1f}%)")
@@ -134,6 +141,17 @@ def abc_analysis_page(system):
         with col3:
             c_count = abc_summary.get('C', 0)
             st.metric("C товары", f"{c_count} ({c_count/total_items*100:.1f}%)")
+        with col4:
+            st.metric("Всего товаров", f"{total_items}")
+        
+        # Информация о нулевых продажах
+        if zero_sales_count > 0:
+            st.info(f"""
+            📊 **Обработка товаров с нулевыми продажами:**
+            - Товаров с продажами > 0: **{items_with_sales}**
+            - Товаров с продажами = 0: **{zero_sales_count}** (автоматически класс C)
+            - Все товары включены в анализ: **✅**
+            """)
         
         # Визуализации
         visualizations = system.create_visualizations()
@@ -144,15 +162,21 @@ def abc_analysis_page(system):
         if 'pareto_analysis' in visualizations:
             st.plotly_chart(visualizations['pareto_analysis'], use_container_width=True)
         
-        # Анализ по категориям
-        st.subheader("📊 Анализ по категориям")
+        # Анализ по категориям с учетом нулевых продаж
+        st.subheader("📊 Анализ по категориям (включая товары с нулевыми продажами)")
         category_analysis = abc_results['category_analysis']
         
         category_data = []
         for cat, data in category_analysis.items():
+            # Получаем информацию о нулевых продажах в категории
+            zero_sales_in_cat = data.get('items_with_zero_sales', 0)
+            items_with_sales_in_cat = data.get('items_with_sales', data['total_items'])
+            
             category_data.append({
                 'Категория': cat,
                 'Всего товаров': data['total_items'],
+                'С продажами': items_with_sales_in_cat,
+                'Нулевые продажи': zero_sales_in_cat,
                 'Общие продажи': f"{data['total_sales']:,.0f}",
                 'Доля продаж %': f"{data['sales_percentage']:.2f}%",
                 'A товары': data['abc_distribution']['A'],
@@ -164,38 +188,122 @@ def abc_analysis_page(system):
         category_df = category_df.sort_values('Доля продаж %', ascending=False)
         st.dataframe(category_df, use_container_width=True)
         
+        # Дополнительная аналитика по нулевым продажам
+        if zero_sales_count > 0:
+            with st.expander("🔍 Детальный анализ товаров с нулевыми продажами"):
+                abc_detailed = abc_results['abc_data_detailed']
+                zero_sales_items = abc_detailed[abc_detailed['annual_sales'] == 0]
+                
+                st.write(f"**Найдено {len(zero_sales_items)} товаров с нулевыми продажами:**")
+                
+                # Группировка по категориям
+                zero_by_category = zero_sales_items['category'].value_counts()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Распределение по категориям:**")
+                    for category, count in zero_by_category.head(10).items():
+                        st.write(f"• {category}: {count} товаров")
+                
+                with col2:
+                    # График распределения нулевых продаж
+                    if len(zero_by_category) > 0:
+                        fig_zero = px.bar(
+                            x=zero_by_category.head(10).values,
+                            y=zero_by_category.head(10).index,
+                            orientation='h',
+                            title='Топ-10 категорий с товарами без продаж',
+                            labels={'x': 'Количество товаров', 'y': 'Категория'}
+                        )
+                        st.plotly_chart(fig_zero, use_container_width=True)
+                
+                # Таблица товаров с нулевыми продажами
+                st.write("**Примеры товаров с нулевыми продажами:**")
+                display_zero = zero_sales_items[['nomenclature', 'category', 'annual_sales', 'abc_class']].head(20)
+                st.dataframe(display_zero, use_container_width=True)
+        
         # Кнопка для перезагрузки
-        if st.button("🔄 Загрузить новый ABC файл"):
-            system.abc_data = None
-            system.abc_results = None
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Загрузить новый ABC файл"):
+                system.abc_data = None
+                system.abc_results = None
+                st.rerun()
+        
+        with col2:
+            if st.button("📊 Показать только товары с продажами"):
+                # Фильтр для показа только товаров с продажами > 0
+                abc_detailed = abc_results['abc_data_detailed']
+                items_with_sales_only = abc_detailed[abc_detailed['annual_sales'] > 0]
+                
+                st.write(f"**Товары только с продажами > 0: {len(items_with_sales_only)} из {len(abc_detailed)}**")
+                
+                # Пересчитываем ABC для товаров только с продажами
+                if len(items_with_sales_only) > 0:
+                    sales_only_summary = items_with_sales_only['abc_class'].value_counts()
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("A (только с продажами)", sales_only_summary.get('A', 0))
+                    with col2:
+                        st.metric("B (только с продажами)", sales_only_summary.get('B', 0))
+                    with col3:
+                        c_with_sales = sales_only_summary.get('C', 0)
+                        st.metric("C (только с продажами)", c_with_sales)
+                    
+                    st.dataframe(
+                        items_with_sales_only[['nomenclature', 'category', 'annual_sales', 'abc_class']].head(20),
+                        use_container_width=True
+                    )
     
     else:
         # ABC анализ не выполнен
         st.info("Загрузите файл для ABC анализа (например: исходники.xlsx)")
         
+        st.success("""
+        ✅ **Улучшения в обработке данных:**
+        
+        - **Пустые ячейки продаж** автоматически заменяются на **0**
+        - **Все товары** включаются в ABC анализ (даже с нулевыми продажами)
+        - Товары с нулевыми продажами получают **класс C**
+        - Принцип Парето рассчитывается только для товаров с продажами > 0
+        """)
+        
         abc_file = st.file_uploader(
             "Выберите файл для ABC анализа",
             type=['xlsx', 'xls'],
-            help="Файл должен содержать: Наименование, Категория, Объем продаж"
+            help="Файл должен содержать: Наименование, Категория, Объем продаж (пустые ячейки = 0)"
         )
         
         if abc_file is not None:
-            with st.spinner("Загрузка и анализ ABC данных..."):
+            with st.spinner("Загрузка и анализ ABC данных с обработкой нулевых продаж..."):
                 # Загружаем файл
                 load_result = system.load_abc_file(abc_file)
                 
                 if load_result['success']:
                     st.success(f"✅ Файл загружен: {load_result['total_items']} товаров")
                     
-                    # Показываем детали загрузки
-                    col1, col2, col3 = st.columns(3)
+                    # Показываем детали загрузки с информацией о нулевых продажах
+                    col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Товаров", load_result['total_items'])
+                        st.metric("Всего товаров", load_result['total_items'])
                     with col2:
-                        st.metric("Категорий", load_result['categories'])
+                        st.metric("С продажами > 0", load_result.get('items_with_sales', '?'))
                     with col3:
-                        st.metric("Использован лист", load_result.get('sheet_used', 'неизвестно'))
+                        st.metric("С продажами = 0", load_result.get('items_with_zero_sales', '?'))
+                    with col4:
+                        st.metric("Категорий", load_result['categories'])
+                    
+                    # Показываем информацию о распределении продаж
+                    if 'sales_distribution' in load_result:
+                        sales_dist = load_result['sales_distribution']
+                        st.info(f"""
+                        📊 **Распределение продаж:**
+                        - Товаров с продажами > 0: {sales_dist['positive_sales']}
+                        - Товаров с продажами = 0: {sales_dist['zero_sales']} (будут класса C)
+                        - Общая стоимость продаж: {sales_dist['total_sales_value']:,.0f}
+                        """)
                     
                     # Показываем топ категории
                     if 'sample_categories' in load_result:
@@ -209,13 +317,54 @@ def abc_analysis_page(system):
                     analysis_result = system.perform_abc_analysis()
                     
                     if analysis_result['success']:
-                        st.success("✅ ABC анализ завершен!")
+                        st.success("✅ ABC анализ завершен с включением всех товаров!")
+                        
+                        # Показываем краткую статистику результата
+                        if analysis_result.get('zero_sales_included'):
+                            st.info(f"""
+                            🎯 **Результат анализа:**
+                            - Всего проанализировано: {analysis_result['total_items']} товаров
+                            - С продажами: {analysis_result['items_with_sales']} товаров
+                            - С нулевыми продажами: {analysis_result['items_with_zero_sales']} товаров (класс C)
+                            - A товары: {analysis_result['abc_summary']['A']}
+                            - B товары: {analysis_result['abc_summary']['B']}
+                            - C товары: {analysis_result['abc_summary']['C']}
+                            """)
+                        
                         st.rerun()
                     else:
                         st.error(f"❌ {analysis_result['error']}")
                 else:
                     st.error(f"❌ {load_result['error']}")
 
+# Дополнительная функция для создания специализированных визуализаций
+def create_zero_sales_visualization(abc_data):
+    """Создание визуализации для товаров с нулевыми продажами"""
+    
+    zero_sales_items = abc_data[abc_data['annual_sales'] == 0]
+    
+    if len(zero_sales_items) == 0:
+        return None
+    
+    # Распределение по категориям
+    zero_by_category = zero_sales_items['category'].value_counts().head(15)
+    
+    fig = px.bar(
+        x=zero_by_category.values,
+        y=zero_by_category.index,
+        orientation='h',
+        title=f'Товары с нулевыми продажами по категориям (всего: {len(zero_sales_items)})',
+        labels={'x': 'Количество товаров', 'y': 'Категория'},
+        color=zero_by_category.values,
+        color_continuous_scale='Reds'
+    )
+    
+    fig.update_layout(
+        height=600,
+        showlegend=False
+    )
+    
+    return fig
 def ads_calculation_page_updated(system):
     """Обновленная страница расчета ADS"""
     st.header("📊 Расчет ADS")
@@ -1015,7 +1164,7 @@ def main():
     
     # Основной контент в зависимости от выбранной страницы
     if page == "🔤 ABC анализ":
-        abc_analysis_page(system)
+        abc_analysis_page_updated(system)
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
     elif page == "📋 MIN запасы":

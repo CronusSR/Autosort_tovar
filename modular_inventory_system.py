@@ -525,6 +525,7 @@ class ModularInventorySystem:
     def load_abc_file(self, file_content) -> Dict:
         """
         ИСПРАВЛЕННАЯ загрузка и обработка файла для ABC анализа
+        ВАЖНО: Пустые ячейки продаж заменяются на нули, товары НЕ исключаются
         
         Args:
             file_content: Содержимое файла (bytes или file-like объект)
@@ -533,7 +534,7 @@ class ModularInventorySystem:
             Dict с информацией о загруженных данных
         """
         try:
-            print("🔄 Начинаем загрузку ABC файла с исправленной логикой...")
+            print("🔄 Начинаем загрузку ABC файла с ИСПРАВЛЕННОЙ логикой обработки пустых продаж...")
             
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
@@ -642,12 +643,12 @@ class ModularInventorySystem:
             
             print(f"📋 ИСПРАВЛЕНО: Назначены колонки: {list(df.columns)}")
             
-            # КРИТИЧЕСКИ ВАЖНАЯ очистка данных
-            print("🧹 ИСПРАВЛЕННАЯ очистка данных...")
+            # КРИТИЧЕСКИ ВАЖНАЯ очистка данных с СОХРАНЕНИЕМ товаров с нулевыми продажами
+            print("🧹 ИСПРАВЛЕННАЯ очистка данных с сохранением товаров с пустыми продажами...")
             initial_count = len(df)
             print(f"📊 Начальное количество строк: {initial_count}")
             
-            # Шаг 1: Очистка номенклатуры
+            # Шаг 1: Очистка номенклатуры (НЕ ТРОГАЕМ ПРОДАЖИ!)
             print("   1️⃣ Очистка номенклатуры...")
             df_before_nomenclature = len(df)
             
@@ -671,24 +672,42 @@ class ModularInventorySystem:
             after_digits = len(df)
             print(f"      После удаления цифр: {after_digits} (-{after_nan - after_digits})")
             
-            # Шаг 2: Обработка годовых продаж
-            print("   2️⃣ Обработка колонки продаж...")
+            # Шаг 2: ИСПРАВЛЕННАЯ обработка годовых продаж - НЕ ИСКЛЮЧАЕМ товары с пустыми продажами!
+            print("   2️⃣ ИСПРАВЛЕННАЯ обработка колонки продаж (пустые = 0, товары сохраняются)...")
             df_before_sales = len(df)
             
-            # Преобразуем в числовой формат
+            # Преобразуем в числовой формат, но НЕ исключаем NaN
+            print(f"      Исходная колонка продаж: {df['annual_sales'].dtype}")
+            
+            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Заменяем NaN на 0 ПЕРЕД проверкой валидности
             df['annual_sales'] = pd.to_numeric(df['annual_sales'], errors='coerce')
+            nan_count_before = df['annual_sales'].isna().sum()
+            print(f"      Найдено NaN значений в продажах: {nan_count_before}")
             
-            # Проверяем количество валидных значений
-            valid_sales = df['annual_sales'].notna().sum()
-            print(f"      Валидных числовых значений продаж: {valid_sales} из {len(df)}")
-            
-            # Заполняем NaN нулями и убираем строки с нулевыми/отрицательными продажами
+            # ЗАМЕНЯЕМ NaN на 0 вместо исключения товаров
             df['annual_sales'] = df['annual_sales'].fillna(0)
-            df = df[df['annual_sales'] > 0]
-            after_sales_filter = len(df)
-            print(f"      После фильтрации продаж: {after_sales_filter} (-{df_before_sales - after_sales_filter})")
+            print(f"      ✅ ИСПРАВЛЕНО: Все NaN заменены на 0")
             
-            # Шаг 3: Обработка категорий
+            # Проверяем отрицательные значения и заменяем на 0
+            negative_count = (df['annual_sales'] < 0).sum()
+            if negative_count > 0:
+                print(f"      Найдено отрицательных значений: {negative_count}")
+                df.loc[df['annual_sales'] < 0, 'annual_sales'] = 0
+                print(f"      ✅ Отрицательные значения заменены на 0")
+            
+            # ВАЖНО: НЕ исключаем товары с нулевыми продажами для ABC анализа
+            zero_sales_count = (df['annual_sales'] == 0).sum()
+            positive_sales_count = (df['annual_sales'] > 0).sum()
+            
+            print(f"      📊 Статистика продаж после обработки:")
+            print(f"         Товаров с продажами > 0: {positive_sales_count}")
+            print(f"         Товаров с продажами = 0: {zero_sales_count}")
+            print(f"         ✅ ВСЕ ТОВАРЫ СОХРАНЕНЫ для ABC анализа")
+            
+            after_sales_processing = len(df)
+            print(f"      После обработки продаж: {after_sales_processing} товаров (потеряно: 0)")
+            
+            # Шаг 3: Обработка категорий (как раньше)
             print("   3️⃣ Обработка категорий...")
             
             # Очищаем категории
@@ -703,16 +722,17 @@ class ModularInventorySystem:
                     mask_empty_category = df['category'].isin(['Без категории', 'nan', ''])
                     mask_valid_subcategory = ~df['subcategory'].isin(['nan', 'None', '', 'Без категории'])
                     
+                    filled_count = (mask_empty_category & mask_valid_subcategory).sum()
                     df.loc[mask_empty_category & mask_valid_subcategory, 'category'] = \
                         df.loc[mask_empty_category & mask_valid_subcategory, 'subcategory']
                     
-                    print(f"      Заполнено категорий из подкатегорий: {(mask_empty_category & mask_valid_subcategory).sum()}")
+                    print(f"      Заполнено категорий из подкатегорий: {filled_count}")
             else:
                 # Если нет колонки category, создаем её
                 df['category'] = 'Общая категория'
                 print("      Создана общая категория")
             
-            # Финальная проверка категорий
+            # Финальная проверка категорий (но не исключаем товары)
             df = df[df['category'].notna()]
             df = df[df['category'].astype(str).str.strip() != '']
             final_count = len(df)
@@ -741,9 +761,15 @@ class ModularInventorySystem:
             categories_count = df['category'].nunique()
             avg_sales = df['annual_sales'].mean()
             
+            # ВАЖНАЯ СТАТИСТИКА: Показываем товары с нулевыми продажами
+            zero_sales_final = (df['annual_sales'] == 0).sum()
+            positive_sales_final = (df['annual_sales'] > 0).sum()
+            
             print(f"\n📊 ИСПРАВЛЕННАЯ СТАТИСТИКА:")
             print("=" * 50)
             print(f"✅ Финальное количество товаров: {final_count}")
+            print(f"💰 Товаров с продажами > 0: {positive_sales_final}")
+            print(f"🔄 Товаров с продажами = 0: {zero_sales_final} (СОХРАНЕНЫ для ABC)")
             print(f"📈 Общие продажи: {total_sales:,.0f}")
             print(f"📊 Средние продажи на товар: {avg_sales:,.0f}")
             print(f"🏷️ Уникальных категорий: {categories_count}")
@@ -754,15 +780,25 @@ class ModularInventorySystem:
             for i, (cat, count) in enumerate(top_categories.items(), 1):
                 print(f"  {i}. {cat}: {count} товаров")
             
-            # Топ товары
-            top_items = df.nlargest(3, 'annual_sales')
-            print(f"\n💰 Топ-3 товара по продажам:")
-            for i, (_, row) in enumerate(top_items.iterrows(), 1):
-                print(f"  {i}. {row['nomenclature'][:40]}: {row['annual_sales']:,.0f}")
+            # Топ товары (только с продажами > 0)
+            if positive_sales_final > 0:
+                top_items = df[df['annual_sales'] > 0].nlargest(3, 'annual_sales')
+                print(f"\n💰 Топ-3 товара по продажам:")
+                for i, (_, row) in enumerate(top_items.iterrows(), 1):
+                    print(f"  {i}. {row['nomenclature'][:40]}: {row['annual_sales']:,.0f}")
+            
+            # Показываем примеры товаров с нулевыми продажами
+            if zero_sales_final > 0:
+                zero_sales_items = df[df['annual_sales'] == 0].head(3)
+                print(f"\n🔄 Примеры товаров с нулевыми продажами (включены в ABC):")
+                for i, (_, row) in enumerate(zero_sales_items.iterrows(), 1):
+                    print(f"  {i}. {row['nomenclature'][:40]}: {row['annual_sales']}")
             
             return {
                 'success': True,
                 'total_items': final_count,  # ИСПРАВЛЕНО: используем финальное количество
+                'items_with_sales': positive_sales_final,
+                'items_with_zero_sales': zero_sales_final,
                 'categories': categories_count,
                 'total_sales': total_sales,
                 'average_sales': avg_sales,
@@ -775,9 +811,15 @@ class ModularInventorySystem:
                     'rows_lost': initial_count - final_count,
                     'loss_percentage': ((initial_count - final_count) / initial_count * 100) if initial_count > 0 else 0
                 },
-                'top_items': top_items[['nomenclature', 'annual_sales']].to_dict('records'),
+                'sales_distribution': {
+                    'positive_sales': positive_sales_final,
+                    'zero_sales': zero_sales_final,
+                    'total_sales_value': float(total_sales)
+                },
+                'top_items': top_items[['nomenclature', 'annual_sales']].to_dict('records') if positive_sales_final > 0 else [],
                 'sample_categories': df['category'].value_counts().head(10).to_dict(),
-                'columns_used': list(df.columns)
+                'columns_used': list(df.columns),
+                'zero_sales_included': True  # Флаг что товары с нулевыми продажами включены
             }
             
         except Exception as e:
@@ -788,6 +830,7 @@ class ModularInventorySystem:
                 'success': False,
                 'error': f"Ошибка загрузки ABC файла: {str(e)}"
             }
+        
     def perform_abc_analysis(self) -> Dict:
         """
         ИСПРАВЛЕННОЕ выполнение ABC анализа по загруженным данным

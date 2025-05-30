@@ -98,30 +98,38 @@ def show_system_status(system):
     st.progress(progress / 100)
     st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/4 этапов)")
 
-def abc_analysis_page(system):
-    """Страница ABC анализа"""
-    st.header("🔤 ABC анализ товаров")
+def abc_analysis_page_fixed(system):
+    """ИСПРАВЛЕННАЯ страница ABC анализа"""
+    st.header("🔤 ABC анализ товаров (ИСПРАВЛЕННАЯ ВЕРСИЯ)")
     
     st.markdown("""
     **ABC анализ** помогает классифицировать товары по принципу Парето (80/20):
     - **A товары** - 80% продаж (обычно 20% товаров)
     - **B товары** - 15% продаж  
     - **C товары** - 5% продаж
+    
+    ✅ **Исправления в v3.1:**
+    - Корректный подсчет количества товаров
+    - Улучшенная очистка данных
+    - Автоматическое определение начала данных
+    - Проверка качества ABC анализа
     """)
     
     # Проверяем статус ABC анализа
     status = system.get_system_status()
     
     if status['abc_analysis']['analyzed']:
-        # ABC анализ уже выполнен
-        st.success("✅ ABC анализ завершен!")
+        # ABC анализ уже выполнен - показываем ИСПРАВЛЕННЫЕ результаты
+        st.success("✅ ABC анализ завершен с исправленной логикой!")
         
-        # Показываем результаты
+        # Получаем ПРАВИЛЬНЫЕ результаты
         abc_results = system.abc_results
         abc_summary = abc_results['abc_summary']
-        total_items = sum(abc_summary.values())
+        total_items = abc_results['total_items']  # ИСПРАВЛЕНО: используем правильное количество
+        total_sales = abc_results['total_sales']
         
-        col1, col2, col3 = st.columns(3)
+        # ИСПРАВЛЕННАЯ статистика
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             a_count = abc_summary.get('A', 0)
             st.metric("A товары", f"{a_count} ({a_count/total_items*100:.1f}%)")
@@ -131,87 +139,138 @@ def abc_analysis_page(system):
         with col3:
             c_count = abc_summary.get('C', 0)
             st.metric("C товары", f"{c_count} ({c_count/total_items*100:.1f}%)")
+        with col4:
+            # КРИТИЧЕСКАЯ ПРОВЕРКА
+            total_check = a_count + b_count + c_count
+            if total_check == total_items:
+                st.metric("✅ Проверка", f"{total_check} = {total_items}")
+            else:
+                st.metric("❌ ОШИБКА", f"{total_check} ≠ {total_items}", delta=f"Разница: {total_check - total_items}")
         
-        # Визуализации
-        visualizations = system.create_visualizations()
+        # Дополнительная информация
+        st.info(f"""
+        **Итоговая статистика (ИСПРАВЛЕННАЯ):**
+        - 📊 Всего товаров: {total_items:,}
+        - 💰 Общие продажи: {total_sales:,.0f}
+        - 🏷️ Категорий: {len(abc_results.get('category_analysis', {}))}
+        """)
         
-        if 'abc_distribution' in visualizations:
-            st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
+        # Проверка принципа Парето
+        if 'pareto_stats' in abc_results:
+            pareto = abc_results['pareto_stats']
+            
+            pareto_col1, pareto_col2 = st.columns(2)
+            with pareto_col1:
+                st.metric(
+                    "A товары (% от общего)", 
+                    f"{pareto['a_items_percentage']:.1f}%",
+                    help="Процент A товаров от общего количества"
+                )
+            with pareto_col2:
+                st.metric(
+                    "A товары (% продаж)", 
+                    f"{pareto['a_sales_percentage']:.1f}%",
+                    delta="Парето ✅" if pareto['pareto_achieved'] else "Парето ⚠️"
+                )
         
-        if 'pareto_analysis' in visualizations:
-            st.plotly_chart(visualizations['pareto_analysis'], use_container_width=True)
+        # ИСПРАВЛЕННЫЕ визуализации
+        try:
+            visualizations = system.create_visualizations()
+            
+            if 'abc_distribution' in visualizations:
+                st.subheader("📊 Распределение товаров по ABC классам")
+                st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
+            
+            if 'pareto_analysis' in visualizations:
+                st.subheader("📈 Парето-анализ (правило 80/20)")
+                st.plotly_chart(visualizations['pareto_analysis'], use_container_width=True)
+        except Exception as e:
+            st.warning(f"⚠️ Ошибка создания графиков: {str(e)}")
         
-        # Анализ по категориям
-        st.subheader("📊 Анализ по категориям")
-        category_analysis = abc_results['category_analysis']
+        # ИСПРАВЛЕННЫЙ анализ по категориям
+        st.subheader("📊 Анализ по категориям (ИСПРАВЛЕННЫЙ)")
         
-        category_data = []
-        for cat, data in category_analysis.items():
-            category_data.append({
-                'Категория': cat,
-                'Всего товаров': data['total_items'],
-                'Общие продажи': f"{data['total_sales']:,.0f}",
-                'Доля продаж %': f"{data['sales_percentage']:.2f}%",
-                'A товары': data['abc_distribution']['A'],
-                'B товары': data['abc_distribution']['B'],
-                'C товары': data['abc_distribution']['C']
-            })
-        
-        category_df = pd.DataFrame(category_data)
-        category_df = category_df.sort_values('Доля продаж %', ascending=False)
-        st.dataframe(category_df, use_container_width=True)
-        
-        # Кнопка для перезагрузки
-        if st.button("🔄 Загрузить новый ABC файл"):
-            system.abc_data = None
-            system.abc_results = None
-            st.rerun()
-    
-    else:
-        # ABC анализ не выполнен
-        st.info("Загрузите файл для ABC анализа (например: исходникимини.xlsx)")
-        
-        abc_file = st.file_uploader(
-            "Выберите файл для ABC анализа",
-            type=['xlsx', 'xls'],
-            help="Файл должен содержать: Наименование, Категория, Объем продаж"
-        )
-        
-        if abc_file is not None:
-            with st.spinner("Загрузка и анализ ABC данных..."):
-                # Загружаем файл
-                load_result = system.load_abc_file(abc_file)
+        if 'category_analysis' in abc_results:
+            category_analysis = abc_results['category_analysis']
+            
+            category_data = []
+            for cat, data in category_analysis.items():
+                # ПРОВЕРЯЕМ правильность подсчета в каждой категории
+                abc_total_in_cat = sum(data['abc_distribution'].values())
+                category_total = data['total_items']
                 
-                if load_result['success']:
-                    st.success(f"✅ Файл загружен: {load_result['total_items']} товаров")
-                    
-                    # Показываем детали загрузки
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Товаров", load_result['total_items'])
-                    with col2:
-                        st.metric("Категорий", load_result['categories'])
-                    with col3:
-                        st.metric("Использован лист", load_result.get('sheet_used', 'неизвестно'))
-                    
-                    # Показываем топ категории
-                    if 'sample_categories' in load_result:
-                        with st.expander("📊 Топ категории по количеству товаров"):
-                            sample_cats = load_result['sample_categories']
-                            cats_df = pd.DataFrame(list(sample_cats.items()), 
-                                                 columns=['Категория', 'Количество товаров'])
-                            st.dataframe(cats_df, use_container_width=True)
-                    
-                    # Выполняем ABC анализ
-                    analysis_result = system.perform_abc_analysis()
-                    
-                    if analysis_result['success']:
-                        st.success("✅ ABC анализ завершен!")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {analysis_result['error']}")
-                else:
-                    st.error(f"❌ {load_result['error']}")
+                category_data.append({
+                    'Категория': cat,
+                    'Всего товаров': category_total,
+                    'Общие продажи': f"{data['total_sales']:,.0f}",
+                    'Доля продаж %': f"{data['sales_percentage']:.2f}%",
+                    'A товары': data['abc_distribution']['A'],
+                    'B товары': data['abc_distribution']['B'],
+                    'C товары': data['abc_distribution']['C'],
+                    'ABC сумма': abc_total_in_cat,
+                    '✅ Проверка': '✅' if abc_total_in_cat == category_total else f'❌ {abc_total_in_cat}≠{category_total}'
+                })
+            
+            category_df = pd.DataFrame(category_data)
+            category_df = category_df.sort_values('Доля продаж %', ascending=False)
+            
+            # Показываем таблицу с проверкой
+            st.dataframe(category_df, use_container_width=True)
+            
+            # Проверяем наличие ошибок в категориях
+            errors_in_categories = category_df[category_df['✅ Проверка'] != '✅']
+            if not errors_in_categories.empty:
+                st.error(f"❌ Найдены ошибки подсчета в {len(errors_in_categories)} категориях!")
+                st.dataframe(errors_in_categories[['Категория', 'Всего товаров', 'ABC сумма', '✅ Проверка']], use_container_width=True)
+            else:
+                st.success("✅ Подсчет во всех категориях корректен!")
+        
+        # Проверка качества данных
+        st.subheader("🔍 Проверка качества ABC анализа")
+        
+        quality_issues = []
+        quality_score = 0
+        max_score = 5
+        
+        # Проверка 1: Правильность подсчета
+        total_abc_check = sum(abc_summary.values())
+        if total_abc_check == total_items:
+            st.success(f"✅ Подсчет ABC корректен: {total_abc_check} = {total_items}")
+            quality_score += 1
+        else:
+            st.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {total_abc_check} ≠ {total_items}")
+            quality_issues.append("Неправильный подсчет ABC классов")
+        
+        # Проверка 2: Достаточность данных
+        if total_items >= 100:
+            st.success(f"✅ Достаточно товаров: {total_items} ≥ 100")
+            quality_score += 1
+        elif total_items >= 50:
+            st.warning(f"⚠️ Приемлемое количество товаров: {total_items} ≥ 50")
+            quality_score += 0.5
+        else:
+            st.error(f"❌ Мало товаров для качественного ABC: {total_items} < 50")
+            quality_issues.append("Недостаточно товаров для ABC анализа")
+        
+        # Проверка 3: Принцип Парето
+        if 'pareto_stats' in abc_results:
+            pareto = abc_results['pareto_stats']
+            a_sales_pct = pareto['a_sales_percentage']
+            
+            if a_sales_pct >= 70:
+                st.success(f"✅ Принцип Парето соблюден: A товары дают {a_sales_pct:.1f}% продаж")
+                quality_score += 1
+            else:
+                st.warning(f"⚠️ Парето нарушен: A товары дают только {a_sales_pct:.1f}% продаж")
+                quality_issues.append("Нарушен принцип Парето 80/20")
+        
+        # Проверка 4: Распределение ABC
+        a_percentage = (a_count / total_items) * 100
+        if 15 <= a_percentage <= 25:
+            st.success(f"✅ Нормальное распределение A товаров: {a_percentage:.1f}%")
+            quality_score += 1
+        else:
+            st.warning(f"⚠️ Нетипичное распределение A товаров: {a_percentage:.1f}%")
 
 def ads_calculation_page_updated(system):
     """Обновленная страница расчета ADS с исправленной логикой"""
@@ -1013,7 +1072,7 @@ def main():
     
     # Основной контент в зависимости от выбранной страницы
     if page == "🔤 ABC анализ":
-        abc_analysis_page(system)
+        abc_analysis_page_fixed(system)
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
     elif page == "📋 MIN запасы":

@@ -244,10 +244,7 @@ class ModularInventorySystem:
         return filename
 
     def export_enhanced_results_with_fixed_ads(self) -> io.BytesIO:
-        """
-        Экспорт результатов с исправленной логикой ADS и JSON
-        Добавьте этот метод в класс ModularInventorySystem
-        """
+        
         if self.calculated_ads is None:
             raise ValueError("Нет данных для экспорта")
         
@@ -524,17 +521,10 @@ class ModularInventorySystem:
 
     def load_abc_file(self, file_content) -> Dict:
         """
-        ИСПРАВЛЕННАЯ загрузка и обработка файла для ABC анализа
-        ВАЖНО: Пустые ячейки продаж заменяются на нули, товары НЕ исключаются
-        
-        Args:
-            file_content: Содержимое файла (bytes или file-like объект)
-            
-        Returns:
-            Dict с информацией о загруженных данных
+        ИСПРАВЛЕННАЯ загрузка ABC файла - все товары сохраняются
         """
         try:
-            print("🔄 Начинаем загрузку ABC файла с ИСПРАВЛЕННОЙ логикой обработки пустых продаж...")
+            print("🔄 Загрузка ABC файла с сохранением ВСЕХ товаров...")
             
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
@@ -542,436 +532,245 @@ class ModularInventorySystem:
             else:
                 excel_file = pd.ExcelFile(io.BytesIO(file_content), engine='openpyxl')
             
-            print(f"📋 Листы в файле: {excel_file.sheet_names}")
-            
-            # Автоматический выбор листа по приоритету
+            # Выбираем лист
             target_sheet = None
-            sheet_priority = ['abc', 'Лист1', 'Sheet1', 'лист1']
+            sheet_priority = ['abc', 'Лист1', 'Sheet1']
             
             for priority_sheet in sheet_priority:
                 if priority_sheet in excel_file.sheet_names:
                     target_sheet = priority_sheet
-                    print(f"✅ Найден лист по приоритету: '{target_sheet}'")
                     break
             
             if target_sheet is None:
                 target_sheet = excel_file.sheet_names[0]
-                print(f"✅ Используем первый доступный лист: '{target_sheet}'")
             
-            # Читаем выбранный лист
+            # Читаем лист
             df = pd.read_excel(excel_file, sheet_name=target_sheet, engine='openpyxl')
-            print(f"📊 Исходный размер файла: {df.shape[0]} строк, {df.shape[1]} колонок")
+            initial_rows = len(df)
+            print(f"📊 Исходный размер: {initial_rows} строк")
             
-            # ИСПРАВЛЕННАЯ логика определения начала данных
+            # Находим начало данных
             data_start_row = None
-            
-            # Ищем строку с данными (содержащую номенклатуру)
-            for i in range(min(20, len(df))):  # Проверяем первые 20 строк
-                row = df.iloc[i]
-                
-                # Проверяем первые несколько колонок на наличие текстовых данных
-                for j in range(min(4, len(row))):
-                    cell_value = str(row.iloc[j]).strip().lower()
-                    
-                    # Пропускаем явно служебные строки
-                    if (pd.isna(row.iloc[j]) or 
-                        cell_value in ['', 'nan', 'none'] or
-                        'заголовок' in cell_value or
-                        'header' in cell_value or
-                        len(cell_value) < 2):
-                        continue
-                    
-                    # Если нашли строку с осмысленными данными
-                    if (len(cell_value) >= 2 and 
-                        not cell_value.isdigit() and
-                        cell_value not in ['колонка', 'column', 'столбец']):
-                        data_start_row = i
-                        print(f"✅ ИСПРАВЛЕНО: Найдено начало данных на строке {i+1}")
-                        print(f"   Первая номенклатура: '{cell_value[:50]}'")
-                        break
-                
-                if data_start_row is not None:
+            for i in range(min(20, len(df))):
+                first_cell = str(df.iloc[i, 0]).strip()
+                if (len(first_cell) > 5 and 
+                    first_cell.lower() != 'nan' and
+                    first_cell != ''):
+                    data_start_row = i
+                    print(f"✅ Начало данных: строка {i+1}")
                     break
             
-            # Если автоматически не нашли, используем стандартные отступы
             if data_start_row is None:
-                if target_sheet.lower() == 'abc':
-                    data_start_row = 6  # Стандартный отступ для листа abc
-                    print("⚠️ Используем стандартный отступ для листа 'abc': строка 7")
-                else:
-                    data_start_row = 5  # Стандартный отступ для других листов
-                    print("⚠️ Используем стандартный отступ: строка 6")
+                data_start_row = 5
             
-            # Применяем найденное начало данных
+            # Применяем отступ
             df = df.iloc[data_start_row:].copy()
             df = df.reset_index(drop=True)
-            print(f"📊 После применения отступа: {df.shape[0]} строк данных")
+            rows_after_offset = len(df)
+            print(f"📊 После отступа: {rows_after_offset} строк")
             
-            # ИСПРАВЛЕННАЯ логика определения колонок
-            print("🔍 Определяем структуру колонок...")
-            
-            # Проверяем количество колонок и их содержимое
-            actual_columns = len(df.columns)
-            print(f"📊 Доступно колонок: {actual_columns}")
-            
-            # Анализируем первые строки для понимания структуры
-            sample_data = df.head(3)
-            print("📋 Образец первых строк:")
-            for i, (idx, row) in enumerate(sample_data.iterrows()):
-                row_preview = [str(val)[:20] + '...' if len(str(val)) > 20 else str(val) 
-                              for val in row.values[:min(6, len(row))]]
-                print(f"   Строка {i+1}: {row_preview}")
-            
-            # Адаптивное назначение колонок в зависимости от структуры
-            if actual_columns >= 4:
-                # Стандартная структура: номенклатура, подкатегория, категория, продажи
+            # Назначаем колонки
+            if len(df.columns) >= 4:
                 df.columns = ['nomenclature', 'subcategory', 'category', 'annual_sales'] + \
-                            [f'extra_col_{i}' for i in range(4, actual_columns)]
-                print("✅ Применена стандартная схема колонок (4+ колонки)")
-                
-            elif actual_columns == 3:
-                # Упрощенная структура: номенклатура, категория, продажи
+                            [f'extra_col_{i}' for i in range(4, len(df.columns))]
+            elif len(df.columns) == 3:
                 df.columns = ['nomenclature', 'category', 'annual_sales']
-                print("✅ Применена упрощенная схема колонок (3 колонки)")
-                
             else:
-                # Минимальная структура
-                base_names = ['nomenclature', 'annual_sales']
-                df.columns = base_names[:actual_columns] + \
-                            [f'col_{i}' for i in range(len(base_names), actual_columns)]
-                print(f"⚠️ Применена минимальная схема колонок ({actual_columns} колонки)")
+                df.columns = ['nomenclature', 'annual_sales'] + [f'col_{i}' for i in range(2, len(df.columns))]
             
-            print(f"📋 ИСПРАВЛЕНО: Назначены колонки: {list(df.columns)}")
-            
-            # КРИТИЧЕСКИ ВАЖНАЯ очистка данных с СОХРАНЕНИЕМ товаров с нулевыми продажами
-            print("🧹 ИСПРАВЛЕННАЯ очистка данных с сохранением товаров с пустыми продажами...")
-            initial_count = len(df)
-            print(f"📊 Начальное количество строк: {initial_count}")
-            
-            # Шаг 1: Очистка номенклатуры (НЕ ТРОГАЕМ ПРОДАЖИ!)
-            print("   1️⃣ Очистка номенклатуры...")
-            df_before_nomenclature = len(df)
-            
-            # Убираем строки с пустой номенклатурой
-            df = df.dropna(subset=['nomenclature'])
-            after_dropna = len(df)
-            print(f"      После dropna: {after_dropna} (-{df_before_nomenclature - after_dropna})")
-            
-            # Убираем строки с пустыми строками
+            # Минимальная очистка номенклатуры
+            before_nomenclature = len(df)
+            df = df[df['nomenclature'].notna()]
             df = df[df['nomenclature'].astype(str).str.strip() != '']
-            after_empty = len(df)
-            print(f"      После удаления пустых: {after_empty} (-{after_dropna - after_empty})")
+            after_nomenclature = len(df)
+            print(f"📊 После очистки номенклатуры: {after_nomenclature} строк")
             
-            # Убираем строки со значением 'nan'
-            df = df[df['nomenclature'].astype(str).str.lower() != 'nan']
-            after_nan = len(df)
-            print(f"      После удаления 'nan': {after_nan} (-{after_empty - after_nan})")
+            # ИСПРАВЛЕННАЯ обработка продаж - заменяем NaN на 0
+            before_sales = len(df)
             
-            # Убираем строки с числовыми значениями в номенклатуре (возможные ошибки)
-            df = df[~df['nomenclature'].astype(str).str.isdigit()]
-            after_digits = len(df)
-            print(f"      После удаления цифр: {after_digits} (-{after_nan - after_digits})")
-            
-            # Шаг 2: ИСПРАВЛЕННАЯ обработка годовых продаж - НЕ ИСКЛЮЧАЕМ товары с пустыми продажами!
-            print("   2️⃣ ИСПРАВЛЕННАЯ обработка колонки продаж (пустые = 0, товары сохраняются)...")
-            df_before_sales = len(df)
-            
-            # Преобразуем в числовой формат, но НЕ исключаем NaN
-            print(f"      Исходная колонка продаж: {df['annual_sales'].dtype}")
-            
-            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Заменяем NaN на 0 ПЕРЕД проверкой валидности
+            # Преобразуем в числовой формат
             df['annual_sales'] = pd.to_numeric(df['annual_sales'], errors='coerce')
-            nan_count_before = df['annual_sales'].isna().sum()
-            print(f"      Найдено NaN значений в продажах: {nan_count_before}")
             
-            # ЗАМЕНЯЕМ NaN на 0 вместо исключения товаров
+            # Заменяем NaN на 0
+            nan_count = df['annual_sales'].isna().sum()
             df['annual_sales'] = df['annual_sales'].fillna(0)
-            print(f"      ✅ ИСПРАВЛЕНО: Все NaN заменены на 0")
+            print(f"💰 NaN заменено на 0: {nan_count}")
             
-            # Проверяем отрицательные значения и заменяем на 0
-            negative_count = (df['annual_sales'] < 0).sum()
-            if negative_count > 0:
-                print(f"      Найдено отрицательных значений: {negative_count}")
-                df.loc[df['annual_sales'] < 0, 'annual_sales'] = 0
-                print(f"      ✅ Отрицательные значения заменены на 0")
+            # Заменяем отрицательные на 0
+            df.loc[df['annual_sales'] < 0, 'annual_sales'] = 0
             
-            # ВАЖНО: НЕ исключаем товары с нулевыми продажами для ABC анализа
-            zero_sales_count = (df['annual_sales'] == 0).sum()
-            positive_sales_count = (df['annual_sales'] > 0).sum()
+            after_sales = len(df)
+            print(f"📊 После обработки продаж: {after_sales} строк")
             
-            print(f"      📊 Статистика продаж после обработки:")
-            print(f"         Товаров с продажами > 0: {positive_sales_count}")
-            print(f"         Товаров с продажами = 0: {zero_sales_count}")
-            print(f"         ✅ ВСЕ ТОВАРЫ СОХРАНЕНЫ для ABC анализа")
-            
-            after_sales_processing = len(df)
-            print(f"      После обработки продаж: {after_sales_processing} товаров (потеряно: 0)")
-            
-            # Шаг 3: Обработка категорий (как раньше)
-            print("   3️⃣ Обработка категорий...")
-            
-            # Очищаем категории
+            # ИСПРАВЛЕННАЯ обработка категорий - заменяем пустые на 'Без категории'
             if 'category' in df.columns:
-                # Заполняем пустые категории
                 df['category'] = df['category'].astype(str).str.strip()
                 df['category'] = df['category'].replace(['nan', 'None', ''], 'Без категории')
                 
-                # Если есть subcategory, используем её для заполнения пустых category
+                # Заполнение из подкатегорий
                 if 'subcategory' in df.columns:
                     df['subcategory'] = df['subcategory'].astype(str).str.strip()
-                    mask_empty_category = df['category'].isin(['Без категории', 'nan', ''])
-                    mask_valid_subcategory = ~df['subcategory'].isin(['nan', 'None', '', 'Без категории'])
-                    
-                    filled_count = (mask_empty_category & mask_valid_subcategory).sum()
-                    df.loc[mask_empty_category & mask_valid_subcategory, 'category'] = \
-                        df.loc[mask_empty_category & mask_valid_subcategory, 'subcategory']
-                    
-                    print(f"      Заполнено категорий из подкатегорий: {filled_count}")
+                    empty_cat_mask = df['category'] == 'Без категории'
+                    valid_subcat_mask = ~df['subcategory'].isin(['nan', 'None', '', 'Без категории'])
+                    fill_mask = empty_cat_mask & valid_subcat_mask
+                    df.loc[fill_mask, 'category'] = df.loc[fill_mask, 'subcategory']
             else:
-                # Если нет колонки category, создаем её
                 df['category'] = 'Общая категория'
-                print("      Создана общая категория")
             
-            # Финальная проверка категорий (но не исключаем товары)
-            df = df[df['category'].notna()]
-            df = df[df['category'].astype(str).str.strip() != '']
-            final_count = len(df)
+            # НЕ УДАЛЯЕМ строки с пустыми категориями!
             
-            print(f"📊 ИТОГО после всех очисток: {final_count} товаров")
-            print(f"📊 Потеряно в процессе очистки: {initial_count - final_count} строк ({((initial_count - final_count) / initial_count * 100):.1f}%)")
-            
-            if final_count == 0:
-                return {
-                    'success': False,
-                    'error': 'Не осталось валидных товаров после очистки данных. Проверьте структуру файла.'
-                }
-            
-            # Проверяем дубликаты
+            # Удаление дубликатов
             duplicates_count = df['nomenclature'].duplicated().sum()
             if duplicates_count > 0:
-                print(f"⚠️ Найдено дубликатов по номенклатуре: {duplicates_count}")
                 df = df.drop_duplicates(subset=['nomenclature'], keep='first')
-                print(f"✅ После удаления дубликатов: {len(df)} товаров")
             
-            # Сохраняем очищенные данные
+            final_count = len(df)
+            
+            # Статистика
+            zero_sales = (df['annual_sales'] == 0).sum()
+            positive_sales = (df['annual_sales'] > 0).sum()
+            
+            # Сохраняем данные
             self.abc_data = df
             
-            # Рассчитываем статистику
-            total_sales = df['annual_sales'].sum()
-            categories_count = df['category'].nunique()
-            avg_sales = df['annual_sales'].mean()
-            
-            # ВАЖНАЯ СТАТИСТИКА: Показываем товары с нулевыми продажами
-            zero_sales_final = (df['annual_sales'] == 0).sum()
-            positive_sales_final = (df['annual_sales'] > 0).sum()
-            
-            print(f"\n📊 ИСПРАВЛЕННАЯ СТАТИСТИКА:")
-            print("=" * 50)
-            print(f"✅ Финальное количество товаров: {final_count}")
-            print(f"💰 Товаров с продажами > 0: {positive_sales_final}")
-            print(f"🔄 Товаров с продажами = 0: {zero_sales_final} (СОХРАНЕНЫ для ABC)")
-            print(f"📈 Общие продажи: {total_sales:,.0f}")
-            print(f"📊 Средние продажи на товар: {avg_sales:,.0f}")
-            print(f"🏷️ Уникальных категорий: {categories_count}")
-            
-            # Топ категории
-            top_categories = df['category'].value_counts().head(5)
-            print(f"\n🏆 Топ-5 категорий по количеству товаров:")
-            for i, (cat, count) in enumerate(top_categories.items(), 1):
-                print(f"  {i}. {cat}: {count} товаров")
-            
-            # Топ товары (только с продажами > 0)
-            if positive_sales_final > 0:
-                top_items = df[df['annual_sales'] > 0].nlargest(3, 'annual_sales')
-                print(f"\n💰 Топ-3 товара по продажам:")
-                for i, (_, row) in enumerate(top_items.iterrows(), 1):
-                    print(f"  {i}. {row['nomenclature'][:40]}: {row['annual_sales']:,.0f}")
-            
-            # Показываем примеры товаров с нулевыми продажами
-            if zero_sales_final > 0:
-                zero_sales_items = df[df['annual_sales'] == 0].head(3)
-                print(f"\n🔄 Примеры товаров с нулевыми продажами (включены в ABC):")
-                for i, (_, row) in enumerate(zero_sales_items.iterrows(), 1):
-                    print(f"  {i}. {row['nomenclature'][:40]}: {row['annual_sales']}")
+            print(f"\n📊 РЕЗУЛЬТАТ:")
+            print(f"   Финальное количество: {final_count} товаров")
+            print(f"   С продажами = 0: {zero_sales}")
+            print(f"   С продажами > 0: {positive_sales}")
+            print(f"   Дубликатов удалено: {duplicates_count}")
             
             return {
                 'success': True,
-                'total_items': final_count,  # ИСПРАВЛЕНО: используем финальное количество
-                'items_with_sales': positive_sales_final,
-                'items_with_zero_sales': zero_sales_final,
-                'categories': categories_count,
-                'total_sales': total_sales,
-                'average_sales': avg_sales,
+                'total_items': final_count,
+                'items_with_sales': positive_sales,
+                'items_with_zero_sales': zero_sales,
+                'categories': df['category'].nunique(),
+                'total_sales': float(df['annual_sales'].sum()),
+                'average_sales': float(df['annual_sales'].mean()),
                 'sheet_used': target_sheet,
-                'data_start_row': data_start_row + 1,  # +1 для пользователя (строки с 1)
                 'duplicates_removed': duplicates_count,
-                'cleaning_stats': {
-                    'initial_rows': initial_count,
-                    'final_rows': final_count,
-                    'rows_lost': initial_count - final_count,
-                    'loss_percentage': ((initial_count - final_count) / initial_count * 100) if initial_count > 0 else 0
-                },
-                'sales_distribution': {
-                    'positive_sales': positive_sales_final,
-                    'zero_sales': zero_sales_final,
-                    'total_sales_value': float(total_sales)
-                },
-                'top_items': top_items[['nomenclature', 'annual_sales']].to_dict('records') if positive_sales_final > 0 else [],
-                'sample_categories': df['category'].value_counts().head(10).to_dict(),
-                'columns_used': list(df.columns),
-                'zero_sales_included': True  # Флаг что товары с нулевыми продажами включены
+                'zero_sales_included': True
             }
             
         except Exception as e:
-            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return {
-                'success': False,
-                'error': f"Ошибка загрузки ABC файла: {str(e)}"
-            }
-        
+            print(f"❌ Ошибка: {str(e)}")
+            return {'success': False, 'error': f"Ошибка загрузки: {str(e)}"}
+
     def perform_abc_analysis(self) -> Dict:
         """
-        ИСПРАВЛЕННОЕ выполнение ABC анализа по загруженным данным
-        
-        Returns:
-            Dict с результатами ABC анализа
+        ИСПРАВЛЕННЫЙ ABC анализ без ошибок numpy
         """
         if self.abc_data is None:
             return {'success': False, 'error': 'ABC данные не загружены'}
         
         try:
-            print("🔤 Начинаем ИСПРАВЛЕННЫЙ ABC анализ...")
+            print("🔤 ABC анализ для всех товаров...")
             
             df = self.abc_data.copy()
             initial_items = len(df)
-            print(f"📊 Исходное количество товаров: {initial_items}")
+            print(f"📊 Товаров для анализа: {initial_items}")
             
-            # Дополнительная валидация данных перед анализом
-            print("🔍 Валидация данных перед ABC анализом...")
+            # Убеждаемся что продажи в правильном формате
+            df['annual_sales'] = pd.to_numeric(df['annual_sales'], errors='coerce').fillna(0)
             
-            # Проверяем наличие продаж
-            valid_sales_mask = (df['annual_sales'] > 0) & df['annual_sales'].notna()
-            valid_sales_count = valid_sales_mask.sum()
+            # Статистика продаж
+            zero_sales_count = (df['annual_sales'] == 0).sum()
+            positive_sales_count = (df['annual_sales'] > 0).sum()
             
-            if valid_sales_count == 0:
-                return {
-                    'success': False, 
-                    'error': 'Нет товаров с положительными продажами для ABC анализа'
-                }
+            print(f"💰 С продажами = 0: {zero_sales_count}")
+            print(f"💰 С продажами > 0: {positive_sales_count}")
             
-            if valid_sales_count < initial_items:
-                print(f"⚠️ Отфильтровано товаров без продаж: {initial_items - valid_sales_count}")
-                df = df[valid_sales_mask].copy()
-            
-            final_items = len(df)
-            print(f"📊 Финальное количество для ABC: {final_items}")
-            
-            # Сортируем по объему продаж (по убыванию)
+            # Сортируем по продажам
             df = df.sort_values('annual_sales', ascending=False)
-            print("✅ Товары отсортированы по продажам")
             
             # Рассчитываем проценты
-            total_sales = df['annual_sales'].sum()
-            print(f"💰 Общие продажи: {total_sales:,.0f}")
-            
-            df['sales_percentage'] = (df['annual_sales'] / total_sales) * 100
-            df['cumulative_percentage'] = df['sales_percentage'].cumsum()
-            
-            # ИСПРАВЛЕННОЕ присвоение ABC классов по принципу Парето
-            def assign_abc_class_fixed(cumulative_pct):
-                """Исправленная функция присвоения ABC классов"""
-                if cumulative_pct <= 80.0:
-                    return 'A'
-                elif cumulative_pct <= 95.0:
-                    return 'B'
-                else:
-                    return 'C'
-            
-            df['abc_class'] = df['cumulative_percentage'].apply(assign_abc_class_fixed)
+            if positive_sales_count > 0:
+                total_sales = df[df['annual_sales'] > 0]['annual_sales'].sum()
+                
+                # Проценты продаж
+                df['sales_percentage'] = 0.0
+                positive_mask = df['annual_sales'] > 0
+                df.loc[positive_mask, 'sales_percentage'] = (df.loc[positive_mask, 'annual_sales'] / total_sales) * 100
+                
+                # Накопительный процент
+                df['cumulative_percentage'] = 0.0
+                df.loc[positive_mask, 'cumulative_percentage'] = df.loc[positive_mask, 'sales_percentage'].cumsum()
+                df.loc[~positive_mask, 'cumulative_percentage'] = 100.0
+                
+                # ABC классы - ИСПРАВЛЕННАЯ версия без apply
+                df['abc_class'] = 'C'  # По умолчанию все C
+                
+                # Присваиваем классы по условиям
+                df.loc[(df['annual_sales'] > 0) & (df['cumulative_percentage'] <= 80), 'abc_class'] = 'A'
+                df.loc[(df['annual_sales'] > 0) & (df['cumulative_percentage'] > 80) & (df['cumulative_percentage'] <= 95), 'abc_class'] = 'B'
+                # Товары с annual_sales == 0 остаются класса C
+                
+            else:
+                # Если нет товаров с продажами, все получают класс C
+                df['sales_percentage'] = 0.0
+                df['cumulative_percentage'] = 100.0
+                df['abc_class'] = 'C'
+                total_sales = 0
             
             # Проверяем распределение ABC
             abc_counts = df['abc_class'].value_counts()
-            print(f"\n📊 ИСПРАВЛЕННОЕ ABC распределение:")
-            print(f"🔴 A товары: {abc_counts.get('A', 0)} ({abc_counts.get('A', 0)/final_items*100:.1f}%)")
-            print(f"🟡 B товары: {abc_counts.get('B', 0)} ({abc_counts.get('B', 0)/final_items*100:.1f}%)")
-            print(f"🟢 C товары: {abc_counts.get('C', 0)} ({abc_counts.get('C', 0)/final_items*100:.1f}%)")
+            final_items = len(df)
             
-            # Проверяем правильность Парето принципа
-            a_sales_percentage = df[df['abc_class'] == 'A']['sales_percentage'].sum()
-            b_sales_percentage = df[df['abc_class'] == 'B']['sales_percentage'].sum()
-            c_sales_percentage = df[df['abc_class'] == 'C']['sales_percentage'].sum()
+            print(f"\n🔤 ABC РАСПРЕДЕЛЕНИЕ:")
+            print(f"   🔴 A товары: {abc_counts.get('A', 0)} ({abc_counts.get('A', 0)/final_items*100:.1f}%)")
+            print(f"   🟡 B товары: {abc_counts.get('B', 0)} ({abc_counts.get('B', 0)/final_items*100:.1f}%)")
+            print(f"   🟢 C товары: {abc_counts.get('C', 0)} ({abc_counts.get('C', 0)/final_items*100:.1f}%)")
             
-            print(f"\n💰 Проверка принципа Парето:")
-            print(f"🔴 A товары: {a_sales_percentage:.1f}% продаж")
-            print(f"🟡 B товары: {b_sales_percentage:.1f}% продаж")  
-            print(f"🟢 C товары: {c_sales_percentage:.1f}% продаж")
-            
-            # ИСПРАВЛЕННЫЙ анализ по категориям
-            print(f"\n📊 Анализ по категориям...")
+            # Анализ по категориям
             category_results = {}
             unique_categories = df['category'].dropna().unique()
-            processed_categories = 0
             
             for category in unique_categories:
-                try:
-                    category_data = df[df['category'] == category].copy()
-                    category_items = len(category_data)
-                    
-                    if category_items == 0:
-                        continue
-                    
-                    category_sales = category_data['annual_sales'].sum()
-                    category_sales_pct = (category_sales / total_sales) * 100
-                    
-                    # ABC распределение в категории
-                    abc_distribution = {
-                        'A': len(category_data[category_data['abc_class'] == 'A']),
-                        'B': len(category_data[category_data['abc_class'] == 'B']),
-                        'C': len(category_data[category_data['abc_class'] == 'C'])
-                    }
-                    
-                    # Проверяем, что сумма распределения совпадает с количеством товаров
-                    total_abc_items = sum(abc_distribution.values())
-                    if total_abc_items != category_items:
-                        print(f"⚠️ Несоответствие в категории '{category}': {total_abc_items} vs {category_items}")
-                    
-                    category_results[str(category)] = {
-                        'total_items': category_items,
-                        'total_sales': float(category_sales),
-                        'sales_percentage': float(category_sales_pct),
-                        'abc_distribution': abc_distribution,
-                        'avg_sales': float(category_data['annual_sales'].mean()),
-                        'max_sales': float(category_data['annual_sales'].max()),
-                        'min_sales': float(category_data['annual_sales'].min()),
-                        'top_items': category_data.head(3)[['nomenclature', 'annual_sales', 'abc_class']].to_dict('records')
-                    }
-                    
-                    processed_categories += 1
-                    
-                except Exception as e:
-                    print(f"❌ Ошибка обработки категории '{category}': {str(e)}")
+                category_data = df[df['category'] == category].copy()
+                category_items = len(category_data)
+                
+                if category_items == 0:
                     continue
+                
+                category_sales = category_data['annual_sales'].sum()
+                category_sales_pct = (category_sales / total_sales) * 100 if total_sales > 0 else 0
+                
+                abc_distribution = {
+                    'A': len(category_data[category_data['abc_class'] == 'A']),
+                    'B': len(category_data[category_data['abc_class'] == 'B']),
+                    'C': len(category_data[category_data['abc_class'] == 'C'])
+                }
+                
+                zero_sales_in_category = len(category_data[category_data['annual_sales'] == 0])
+                positive_sales_in_category = len(category_data[category_data['annual_sales'] > 0])
+                
+                category_results[str(category)] = {
+                    'total_items': category_items,
+                    'items_with_sales': positive_sales_in_category,
+                    'items_with_zero_sales': zero_sales_in_category,
+                    'total_sales': float(category_sales),
+                    'sales_percentage': float(category_sales_pct),
+                    'abc_distribution': abc_distribution,
+                    'avg_sales': float(category_data['annual_sales'].mean()),
+                    'max_sales': float(category_data['annual_sales'].max()),
+                    'min_sales': float(category_data['annual_sales'].min()),
+                    'top_items': category_data.head(3)[['nomenclature', 'annual_sales', 'abc_class']].to_dict('records')
+                }
             
-            print(f"✅ Обработано категорий: {processed_categories}")
-            
-            # ИСПРАВЛЕННАЯ общая статистика ABC
+            # Итоговая статистика
             abc_summary = {
                 'A': int(abc_counts.get('A', 0)),
                 'B': int(abc_counts.get('B', 0)),
                 'C': int(abc_counts.get('C', 0))
             }
             
-            # Дополнительная статистика
             pareto_stats = {
+                'total_items_analyzed': final_items,
+                'items_with_sales': positive_sales_count,
+                'items_with_zero_sales': zero_sales_count,
                 'a_items_percentage': (abc_summary['A'] / final_items) * 100,
-                'a_sales_percentage': float(a_sales_percentage),
-                'b_items_percentage': (abc_summary['B'] / final_items) * 100,
-                'b_sales_percentage': float(b_sales_percentage),
-                'c_items_percentage': (abc_summary['C'] / final_items) * 100,
-                'c_sales_percentage': float(c_sales_percentage),
-                'pareto_achieved': a_sales_percentage >= 70.0  # Мягкий критерий для Парето
+                'a_sales_percentage': float(df[df['abc_class'] == 'A']['sales_percentage'].sum()),
+                'pareto_achieved': positive_sales_count > 0 and df[df['abc_class'] == 'A']['sales_percentage'].sum() >= 70.0
             }
             
             # Сохраняем результаты
@@ -982,27 +781,27 @@ class ModularInventorySystem:
                 'pareto_stats': pareto_stats,
                 'total_sales': float(total_sales),
                 'total_items': final_items,
-                'analysis_date': pd.Timestamp.now().isoformat()
+                'items_with_zero_sales': zero_sales_count,
+                'analysis_date': pd.Timestamp.now().isoformat(),
+                'zero_sales_included': True
             }
             
-            print(f"\n✅ ABC анализ завершен успешно!")
-            print(f"📊 Итоговая статистика:")
-            print(f"   • Товаров проанализировано: {final_items}")
-            print(f"   • Категорий обработано: {processed_categories}")
-            print(f"   • Принцип Парето: {'✅ соблюден' if pareto_stats['pareto_achieved'] else '⚠️ не идеален'}")
+            print(f"✅ ABC анализ завершен: {final_items} товаров")
             
             return {
                 'success': True,
                 'abc_summary': abc_summary,
-                'category_count': processed_categories,
+                'category_count': len(category_results),
                 'total_sales': float(total_sales),
-                'total_items': final_items,  # ИСПРАВЛЕНО: правильное количество
+                'total_items': final_items,
+                'items_with_sales': positive_sales_count,
+                'items_with_zero_sales': zero_sales_count,
                 'pareto_achieved': pareto_stats['pareto_achieved'],
-                'pareto_stats': pareto_stats
+                'zero_sales_included': True
             }
             
         except Exception as e:
-            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ABC анализа: {str(e)}")
+            print(f"❌ Ошибка ABC анализа: {str(e)}")
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': f"Ошибка ABC анализа: {str(e)}"}
@@ -1737,6 +1536,318 @@ class ModularInventorySystem:
             if key in self.default_params:
                 self.default_params[key] = value
     
+    def export_enhanced_results_russian(self) -> io.BytesIO:
+        """
+        Экспорт результатов с русскими заголовками
+        """
+        if self.calculated_ads is None:
+            raise ValueError("Нет данных для экспорта")
+        
+        output = io.BytesIO()
+        
+        try:
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                
+                # 1. Основные результаты ADS с русскими заголовками
+                if self.calculated_ads is not None:
+                    ads_df_russian = self.calculated_ads.copy()
+                    ads_df_russian.columns = ['Номенклатура', 'Среднедневные_продажи', 'Среднемесячные', 'Общие_продажи']
+                    ads_df_russian.to_excel(writer, sheet_name='ADS_Расчеты', index=False)
+                
+                # 2. ABC анализ с русскими заголовками
+                if self.abc_results is not None:
+                    abc_detailed = self.abc_results['abc_data_detailed'].copy()
+                    
+                    # Переименовываем колонки на русские
+                    column_mapping = {
+                        'nomenclature': 'Номенклатура',
+                        'subcategory': 'Подкатегория', 
+                        'category': 'Категория',
+                        'annual_sales': 'Годовые_продажи',
+                        'sales_percentage': 'Процент_продаж',
+                        'cumulative_percentage': 'Накопительный_процент',
+                        'abc_class': 'ABC_класс'
+                    }
+                    
+                    abc_detailed_russian = abc_detailed.rename(columns=column_mapping)
+                    abc_detailed_russian.to_excel(writer, sheet_name='ABC_Детально', index=False)
+                    
+                    # ABC анализ по категориям
+                    if self.abc_results['category_analysis']:
+                        category_df = pd.DataFrame.from_dict(
+                            self.abc_results['category_analysis'], 
+                            orient='index'
+                        )
+                        
+                        # Переименовываем индекс и колонки
+                        category_df.index.name = 'Категория'
+                        category_df.columns = [
+                            'Всего_товаров', 'Товары_с_продажами', 'Товары_без_продаж',
+                            'Общие_продажи', 'Процент_продаж', 'ABC_распределение',
+                            'Средние_продажи', 'Максимальные_продажи', 'Минимальные_продажи',
+                            'Топ_товары'
+                        ]
+                        category_df.to_excel(writer, sheet_name='ABC_по_категориям', index=True)
+                
+                # 3. Минимальные запасы с русскими заголовками
+                if self.calculated_min_stock is not None:
+                    min_stock_russian = self.calculated_min_stock.copy()
+                    
+                    min_stock_column_mapping = {
+                        'номенклатура': 'Номенклатура',
+                        'ads': 'Среднедневные_продажи',
+                        'ip_target_days': 'Дни_транзита',
+                        'min_stock_days': 'Дни_запаса',
+                        'transit_consumption': 'Транзитное_потребление',
+                        'min_stock_base': 'Базовый_минимум',
+                        'min_stock_total': 'Минимальный_запас_итого',
+                        'priority': 'Приоритет'
+                    }
+                    
+                    min_stock_russian = min_stock_russian.rename(columns=min_stock_column_mapping)
+                    min_stock_russian.to_excel(writer, sheet_name='Минимальные_запасы', index=False)
+                
+                # 4. Текущие остатки с русскими заголовками
+                if self.stock_data is not None:
+                    stock_russian = self.stock_data[['номенклатура', 'total_current_stock']].copy()
+                    stock_russian.columns = ['Номенклатура', 'Текущий_остаток']
+                    stock_russian.to_excel(writer, sheet_name='Текущие_остатки', index=False)
+                
+                # 5. Сравнение остатков с русскими заголовками
+                if self.stock_comparison is not None:
+                    comparison_russian = self.stock_comparison.copy()
+                    
+                    comparison_column_mapping = {
+                        'номенклатура': 'Номенклатура',
+                        'ads': 'Среднедневные_продажи',
+                        'min_stock_total': 'Минимальный_запас',
+                        'total_current_stock': 'Текущий_остаток',
+                        'stock_deficit': 'Дефицит',
+                        'current_stock_days': 'Дни_остатка',
+                        'status': 'Статус',
+                        'order_priority': 'Приоритет_заказа',
+                        'recommended_order': 'Рекомендуемый_заказ'
+                    }
+                    
+                    comparison_russian = comparison_russian.rename(columns=comparison_column_mapping)
+                    comparison_russian.to_excel(writer, sheet_name='Сравнение_остатков', index=False)
+                    
+                    # Товары с дефицитом
+                    deficit_items = comparison_russian[comparison_russian['Дефицит'] > 0]
+                    if not deficit_items.empty:
+                        deficit_items.to_excel(writer, sheet_name='Товары_с_дефицитом', index=False)
+                    
+                    # Критичные товары
+                    critical_items = comparison_russian[comparison_russian['Статус'] == 'КРИТИЧНО']
+                    if not critical_items.empty:
+                        critical_items.to_excel(writer, sheet_name='Критичные_товары', index=False)
+                    
+                    # Рекомендации по заказу
+                    order_recommendations = comparison_russian[
+                        comparison_russian['Рекомендуемый_заказ'] > 0
+                    ][['Номенклатура', 'Рекомендуемый_заказ', 'Приоритет_заказа', 
+                       'Среднедневные_продажи', 'Дни_остатка']]
+                    
+                    if not order_recommendations.empty:
+                        order_recommendations = order_recommendations.sort_values('Рекомендуемый_заказ', ascending=False)
+                        order_recommendations.to_excel(writer, sheet_name='Рекомендации_заказа', index=False)
+                
+                # 6. Общая сводка с русскими заголовками
+                summary_data = [{
+                    'Дата_анализа': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'),
+                    'Всего_товаров': len(self.calculated_ads) if self.calculated_ads is not None else 0,
+                    'ABC_выполнен': self.abc_results is not None,
+                    'Минимальные_запасы_рассчитаны': self.calculated_min_stock is not None,
+                    'Остатки_сравнены': self.stock_comparison is not None,
+                    'Версия_системы': 'Модульная система v3.0'
+                }]
+                
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Общая_сводка', index=False)
+            
+            output.seek(0)
+            return output
+            
+        except Exception as e:
+            raise Exception(f"Ошибка экспорта с русскими заголовками: {str(e)}")
+
+   # Русификация для Streamlit интерфейса
+    def display_abc_results_russian(abc_results, orders_df=None):
+        """
+        Отображение результатов ABC анализа с русскими заголовками
+        """
+        import streamlit as st
+        
+        if abc_results:
+            st.subheader("📊 Результаты ABC анализа")
+            
+            # Общая статистика с русскими названиями
+            abc_summary = abc_results['abc_summary']
+            total_items = sum(abc_summary.values())
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                a_count = abc_summary.get('A', 0)
+                st.metric("🔴 A товары", f"{a_count} ({a_count/total_items*100:.1f}%)")
+            with col2:
+                b_count = abc_summary.get('B', 0)
+                st.metric("🟡 B товары", f"{b_count} ({b_count/total_items*100:.1f}%)")
+            with col3:
+                c_count = abc_summary.get('C', 0)
+                st.metric("🟢 C товары", f"{c_count} ({c_count/total_items*100:.1f}%)")
+            with col4:
+                st.metric("📦 Всего товаров", f"{total_items}")
+            
+            # Таблица по категориям с русскими заголовками
+            if 'category_analysis' in abc_results:
+                st.subheader("🏷️ Анализ по категориям")
+                
+                category_data = []
+                for cat, data in abc_results['category_analysis'].items():
+                    category_data.append({
+                        'Категория': cat,
+                        'Всего товаров': data['total_items'],
+                        'С продажами': data.get('items_with_sales', data['total_items']),
+                        'Без продаж': data.get('items_with_zero_sales', 0),
+                        'Общие продажи': f"{data['total_sales']:,.0f}",
+                        'Доля продаж (%)': f"{data['sales_percentage']:.2f}%",
+                        'A товары': data['abc_distribution']['A'],
+                        'B товары': data['abc_distribution']['B'],
+                        'C товары': data['abc_distribution']['C']
+                    })
+                
+                category_df = pd.DataFrame(category_data)
+                category_df = category_df.sort_values('Доля продаж (%)', ascending=False)
+                st.dataframe(category_df, use_container_width=True)
+
+    def display_orders_table_russian(orders_df):
+        """
+        Отображение таблицы заказов с русскими заголовками
+        """
+        import streamlit as st
+        
+        if orders_df is not None and not orders_df.empty:
+            st.subheader("📋 Детальные заказы")
+            
+            # Переименовываем колонки на русские
+            orders_russian = orders_df.copy()
+            
+            russian_columns = {
+                'nomenclature': 'Номенклатура',
+                'category': 'Категория',
+                'branch': 'Филиал',
+                'ads': 'Среднедневные продажи',
+                'min_stock': 'Минимальный запас',
+                'current_stock': 'Текущий остаток',
+                'stock_days': 'Дни остатка',
+                'transit_consumption': 'Транзитное потребление',
+                'need': 'Потребность',
+                'pre_order': 'Предзаказ',
+                'days_supply': 'Дни запаса',
+                'active_assortment': 'Активный ассортимент',
+                'transit_time': 'Транзитное время',
+                'abc_class': 'ABC класс'
+            }
+            
+            # Применяем переименование только для существующих колонок
+            columns_to_rename = {k: v for k, v in russian_columns.items() if k in orders_russian.columns}
+            orders_russian = orders_russian.rename(columns=columns_to_rename)
+            
+            # Фильтры с русскими названиями
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if 'Филиал' in orders_russian.columns:
+                    selected_branch = st.selectbox(
+                        "Выберите филиал:",
+                        options=['Все'] + list(orders_russian['Филиал'].unique()),
+                        key="filter_branch_russian"
+                    )
+            with col2:
+                if 'Категория' in orders_russian.columns:
+                    selected_category = st.selectbox(
+                        "Выберите категорию:",
+                        options=['Все'] + list(orders_russian['Категория'].unique()),
+                        key="filter_category_russian"
+                    )
+            with col3:
+                if 'ABC класс' in orders_russian.columns:
+                    selected_abc = st.selectbox(
+                        "ABC класс:",
+                        options=['Все'] + list(orders_russian['ABC класс'].unique()),
+                        key="filter_abc_russian"
+                    )
+            
+            # Применяем фильтры
+            filtered_df = orders_russian.copy()
+            
+            if 'Филиал' in orders_russian.columns and selected_branch != 'Все':
+                filtered_df = filtered_df[filtered_df['Филиал'] == selected_branch]
+            if 'Категория' in orders_russian.columns and selected_category != 'Все':
+                filtered_df = filtered_df[filtered_df['Категория'] == selected_category]
+            if 'ABC класс' in orders_russian.columns and selected_abc != 'Все':
+                filtered_df = filtered_df[filtered_df['ABC класс'] == selected_abc]
+            
+            # Отображаем таблицу
+            st.dataframe(filtered_df, use_container_width=True)
+            
+            if len(filtered_df) != len(orders_russian):
+                st.info(f"Показано {len(filtered_df)} из {len(orders_russian)} позиций")
+
+    def create_russian_summary_stats(system):
+        """
+        Создание сводной статистики с русскими названиями
+        """
+        summary_stats = {}
+        
+        # ABC анализ
+        if system.abc_results:
+            abc_summary = system.abc_results['abc_summary']
+            total_abc_items = sum(abc_summary.values())
+            
+            summary_stats['ABC анализ'] = {
+                'Всего товаров': total_abc_items,
+                'A товары': abc_summary.get('A', 0),
+                'B товары': abc_summary.get('B', 0),
+                'C товары': abc_summary.get('C', 0),
+                'Общие продажи': system.abc_results.get('total_sales', 0),
+                'Товары без продаж': system.abc_results.get('items_with_zero_sales', 0)
+            }
+        
+        # ADS расчеты
+        if system.calculated_ads is not None:
+            summary_stats['ADS расчеты'] = {
+                'Всего товаров': len(system.calculated_ads),
+                'Общий ADS': system.calculated_ads['ads'].sum(),
+                'Средний ADS': system.calculated_ads['ads'].mean(),
+                'Максимальный ADS': system.calculated_ads['ads'].max()
+            }
+        
+        # Минимальные запасы
+        if system.calculated_min_stock is not None:
+            summary_stats['Минимальные запасы'] = {
+                'Всего товаров': len(system.calculated_min_stock),
+                'Общий минимальный запас': system.calculated_min_stock['min_stock_total'].sum(),
+                'Транзитное потребление': system.calculated_min_stock['transit_consumption'].sum(),
+                'Дни запаса': system.calculated_min_stock['min_stock_days'].iloc[0] if len(system.calculated_min_stock) > 0 else 0
+            }
+        
+        # Сравнение остатков
+        if system.stock_comparison is not None:
+            total_items = len(system.stock_comparison)
+            deficit_items = len(system.stock_comparison[system.stock_comparison['stock_deficit'] > 0])
+            critical_items = len(system.stock_comparison[system.stock_comparison['status'] == 'КРИТИЧНО'])
+            
+            summary_stats['Сравнение остатков'] = {
+                'Всего товаров': total_items,
+                'Товары с дефицитом': deficit_items,
+                'Критичные товары': critical_items,
+                'Процент дефицита': (deficit_items / total_items * 100) if total_items > 0 else 0,
+                'Общий дефицит': system.stock_comparison['stock_deficit'].sum(),
+                'Рекомендуемый заказ': system.stock_comparison['recommended_order'].sum()
+            }
+        
+        return summary_stats
+
     def get_recommendations(self) -> List[str]:
         """
         Получение рекомендаций по улучшению системы

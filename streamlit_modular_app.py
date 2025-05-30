@@ -383,7 +383,7 @@ def ads_calculation_page_updated(system):
             return  # Если используются множественные файлы, выходим
     except Exception as e:
         st.error(f"Ошибка загрузки множественных файлов: {e}")
-        
+
     st.markdown("""
     **🔢 ФОРМУЛА ADS:**
     - **Номенклатура:** Читается из колонки B 
@@ -1228,7 +1228,7 @@ def main():
             st.info(f"📊 Прогресс: {progress:.0f}%")
     
     with col3:
-        st.caption(f"Система v3.0 | {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+        st.caption(f"Система v1.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
 
 if __name__ == "__main__":
     main()

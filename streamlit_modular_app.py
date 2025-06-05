@@ -18,6 +18,7 @@ from subcategory_abc import create_subcategory_abc_interface
 from typing import Dict, List, Optional 
 warnings.filterwarnings('ignore')
 
+
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -1728,6 +1729,40 @@ def settings_page(system):
     - ✨ Анализ эффективности подкатегорий
     """)
 
+def update_quick_actions_sidebar(system):
+    """Обновленные быстрые действия с учетом денежных данных"""
+    
+    st.subheader("⚡ Быстрые действия")
+    
+    status = system.get_system_status()
+    
+    # Проверяем наличие денежных данных
+    has_money_data = False
+    if (hasattr(system, 'calculated_ads') and 
+        system.calculated_ads is not None and
+        'last_purchase_price' in system.calculated_ads.columns):
+        
+        items_with_price = len(system.calculated_ads[system.calculated_ads['last_purchase_price'] > 0])
+        has_money_data = items_with_price > 0
+    
+    if not status['abc_analysis']['analyzed']:
+        st.button("🔤 Начать с ABC", key="quick_abc")
+    elif not status['sales_analysis']['ads_calculated']:
+        st.button("📊 Рассчитать ADS с ценами", key="quick_ads")
+    elif not has_money_data and status['sales_analysis']['ads_calculated']:
+        st.warning("💰 Цены не загружены")
+        st.button("📊 Перезагрузить ADS с ценами", key="quick_reload_ads")
+    elif not status['subcategory_analysis']['analyzed']:
+        st.button("📊 Анализ подкатегорий", key="quick_subcategory")
+    elif not status['min_stock_analysis']['calculated']:
+        st.button("📋 MIN запасы", key="quick_min")
+    elif not status['stock_analysis']['compared']:
+        st.button("⚖️ Сравнить остатки", key="quick_compare")
+    elif has_money_data:
+        st.button("💰 Денежная аналитика", key="quick_money")
+    else:
+        st.button("📤 Экспорт", key="quick_export")
+
 def main():
     """Основная функция приложения"""
     # Инициализация системы
@@ -1765,21 +1800,36 @@ def main():
         
         # Быстрые действия
         st.subheader("⚡ Быстрые действия")
-        
+    
         status = system.get_system_status()
+        
+        # Проверяем наличие денежных данных
+        has_money_data = False
+        if (hasattr(system, 'calculated_ads') and 
+            system.calculated_ads is not None and
+            'last_purchase_price' in system.calculated_ads.columns):
+            
+            items_with_price = len(system.calculated_ads[system.calculated_ads['last_purchase_price'] > 0])
+            has_money_data = items_with_price > 0
         
         if not status['abc_analysis']['analyzed']:
             st.button("🔤 Начать с ABC", key="quick_abc")
+        elif not status['sales_analysis']['ads_calculated']:
+            st.button("📊 Рассчитать ADS с ценами", key="quick_ads")
+        elif not has_money_data and status['sales_analysis']['ads_calculated']:
+            st.warning("💰 Цены не загружены")
+            st.button("📊 Перезагрузить ADS с ценами", key="quick_reload_ads")
         elif not status['subcategory_analysis']['analyzed']:
             st.button("📊 Анализ подкатегорий", key="quick_subcategory")
-        elif not status['sales_analysis']['ads_calculated']:
-            st.button("📊 Рассчитать ADS", key="quick_ads")
         elif not status['min_stock_analysis']['calculated']:
             st.button("📋 MIN запасы", key="quick_min")
         elif not status['stock_analysis']['compared']:
             st.button("⚖️ Сравнить остатки", key="quick_compare")
+        elif has_money_data:
+            st.button("💰 Денежная аналитика", key="quick_money")
         else:
             st.button("📤 Экспорт", key="quick_export")
+        
     
     # Основной контент в зависимости от выбранной страницы
     if page == "🔤 ABC анализ":
@@ -1818,12 +1868,24 @@ def main():
     with col2:
         progress = status['overall']['progress_percentage']
         if progress == 100:
-            st.success("✅ Все этапы завершены!")
+            # НОВОЕ: Проверяем наличие денежных данных
+            if (hasattr(system, 'stock_comparison') and 
+                system.stock_comparison is not None and
+                'stock_deficit_money' in system.stock_comparison.columns):
+                st.success("✅ Все этапы с денежными расчетами завершены! 💰")
+            else:
+                st.success("✅ Все этапы завершены!")
         else:
             st.info(f"📊 Прогресс: {progress:.0f}%")
     
     with col3:
-        st.caption(f"Система v2.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+        version_info = "Система v2.1 💰"
+        if (hasattr(system, 'calculated_ads') and 
+            system.calculated_ads is not None and
+            'last_purchase_price' in system.calculated_ads.columns):
+            version_info += " | Цены загружены ✅"
+        
+        st.caption(f"{version_info} | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
 
 if __name__ == "__main__":
     main()

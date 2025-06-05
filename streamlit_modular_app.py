@@ -203,7 +203,11 @@ def subcategory_abc_analysis_page(system):
                 visualizations = system.subcategory_analyzer.create_subcategory_visualizations()
                 
                 if 'abc_distribution' in visualizations:
-                    st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
+                    st.plotly_chart(
+                        visualizations['abc_distribution'], 
+                        use_container_width=True,
+                        key="main_page_subcategory_abc_distribution"
+                    )
         
         # Основной интерфейс анализа подкатегорий
         st.markdown("---")

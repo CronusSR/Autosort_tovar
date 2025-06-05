@@ -222,6 +222,18 @@ class SubcategoryABCAnalyzer:
                 abc_distribution = subcategory_data['abc_class'].value_counts().to_dict()
                 category = subcategory_data['category'].iloc[0] if len(subcategory_data) > 0 else 'Неизвестно'
                 
+                # ОТЛАДКА: проверяем логику ABC классификации
+                print(f"🔍 ABC для '{subcategory}':")
+                print(f"   Товаров: {len(subcategory_data)}")
+                print(f"   ABC распределение: {abc_distribution}")
+                print(f"   Проверка: A={abc_distribution.get('A', 0)}, B={abc_distribution.get('B', 0)}, C={abc_distribution.get('C', 0)}")
+                print(f"   Сумма: {abc_distribution.get('A', 0) + abc_distribution.get('B', 0) + abc_distribution.get('C', 0)}")
+                
+                # Проверяем что сумма ABC равна общему количеству товаров
+                abc_sum = abc_distribution.get('A', 0) + abc_distribution.get('B', 0) + abc_distribution.get('C', 0)
+                if abc_sum != len(subcategory_data):
+                    print(f"⚠️ ПРОБЛЕМА: Сумма ABC ({abc_sum}) не равна количеству товаров ({len(subcategory_data)})")
+                
                 results[subcategory] = {
                     'category': category,
                     'total_items': len(subcategory_data),
@@ -485,27 +497,54 @@ class SubcategoryABCAnalyzer:
         
         export_data = []
         
+        print("🔍 ОТЛАДКА: Начинаем экспорт данных подкатегорий...")
+        
         for subcategory, data in self.subcategory_results.items():
+            # ИСПРАВЛЕННЫЙ расчет доли A товаров с отладкой
+            total_items = data['total_items']
+            a_items = data['abc_distribution']['A']
+            
+            # Правильный расчет процента A товаров (не может быть больше 100%)
+            if total_items > 0:
+                a_percentage = (a_items / total_items) * 100
+            else:
+                a_percentage = 0
+            
+            # ОТЛАДКА: выводим расчеты
+            print(f"📊 {subcategory[:30]}: A={a_items}, Всего={total_items}, Доля={a_percentage:.1f}%")
+            
+            # Ограничиваем процент до 100% на всякий случай
+            a_percentage = min(a_percentage, 100.0)
+            
             export_data.append({
                 'Подкатегория': subcategory,
                 'Категория': data['category'],
-                'Всего товаров': data['total_items'],
+                'Всего товаров': total_items,
                 'Товаров с продажами': data['items_with_sales'],
                 'Товаров без продаж': data['items_with_zero_sales'],
                 'Общие продажи': data['total_sales'],
                 'Средние продажи': data['average_sales'],
-                'A товары': data['abc_distribution']['A'],
+                'A товары': a_items,
                 'B товары': data['abc_distribution']['B'],
                 'C товары': data['abc_distribution']['C'],
-                'Доля A товаров (%)': round(
-                    (data['abc_distribution']['A'] / data['total_items']) * 100, 1
-                ) if data['total_items'] > 0 else 0,
-                'Эффективность': 'Высокая' if data['abc_distribution']['A'] > data['total_items'] * 0.2 
-                                           else 'Средняя' if data['abc_distribution']['A'] > 0 
+                'Доля A товаров (%)': round(a_percentage, 1),  # ИСПРАВЛЕНО
+                'Эффективность': 'Высокая' if a_percentage > 20.0
+                                           else 'Средняя' if a_percentage > 5.0
                                            else 'Низкая'
             })
         
         df = pd.DataFrame(export_data)
+        
+        # Дополнительная проверка данных
+        print(f"📊 ОТЛАДКА: Создан DataFrame с {len(df)} подкатегориями")
+        print(f"📊 ОТЛАДКА: Диапазон долей A: {df['Доля A товаров (%)'].min():.1f}% - {df['Доля A товаров (%)'].max():.1f}%")
+        
+        # Проверяем на аномальные значения
+        anomalies = df[df['Доля A товаров (%)'] > 100]
+        if len(anomalies) > 0:
+            print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Найдены аномальные доли A товаров:")
+            for _, row in anomalies.iterrows():
+                print(f"   {row['Подкатегория']}: {row['Доля A товаров (%)']}%")
         
         # Сортируем по общим продажам
         df = df.sort_values('Общие продажи', ascending=False)
@@ -616,8 +655,7 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
                     - Средние продажи на товар: {load_result['average_sales']:,.0f}
                     """)
                     
-                    # Показываем структуру колонок
-                    st.success("✅ ИСПРАВЛЕНО: Подкатегории читаются из 2-го столбца, категории из 3-го")
+                    
                     
                 else:
                     st.error(f"❌ {load_result['error']}")
@@ -674,14 +712,46 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
             # Экспортируем данные в таблицу
             export_df = analyzer.export_subcategory_analysis()
             
+            # ДОБАВЛЯЕМ ДИАГНОСТИКУ
+            with st.expander("🔍 Диагностика расчетов (для отладки)"):
+                st.write("**Проверка расчетов доли A товаров:**")
+                
+                if not export_df.empty:
+                    # Показываем первые 5 записей с детальными расчетами
+                    for i, (_, row) in enumerate(export_df.head().iterrows()):
+                        st.write(f"**{i+1}. {row['Подкатегория']}:**")
+                        st.write(f"   - A товары: {row['A товары']}")
+                        st.write(f"   - Всего товаров: {row['Всего товаров']}")
+                        calculated_percentage = (row['A товары'] / row['Всего товаров'] * 100) if row['Всего товаров'] > 0 else 0
+                        st.write(f"   - Расчет: {row['A товары']} ÷ {row['Всего товаров']} × 100 = {calculated_percentage:.1f}%")
+                        st.write(f"   - Результат в таблице: {row['Доля A товаров (%)']}%")
+                        st.write("---")
+                
+                # Проверяем исходные данные ABC анализа
+                if hasattr(analyzer, 'subcategory_results') and analyzer.subcategory_results:
+                    st.write("**Проверка исходных ABC результатов:**")
+                    
+                    # Берем первую подкатегорию для детального анализа
+                    first_subcategory = list(analyzer.subcategory_results.keys())[0]
+                    first_data = analyzer.subcategory_results[first_subcategory]
+                    
+                    st.write(f"**Подкатегория '{first_subcategory}':**")
+                    st.write(f"- Всего товаров: {first_data['total_items']}")
+                    st.write(f"- ABC распределение: {first_data['abc_distribution']}")
+                    
+                    if 'abc_data' in first_data:
+                        abc_check = first_data['abc_data']['abc_class'].value_counts()
+                        st.write(f"- Проверка через value_counts: {abc_check.to_dict()}")
+            
             if not export_df.empty:
-                # Фильтры
+                # ИСПРАВЛЕННЫЕ ФИЛЬТРЫ: по подкатегориям вместо категорий
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    category_filter = st.selectbox(
-                        "Фильтр по категории:",
-                        options=['Все категории'] + sorted(export_df['Категория'].unique().tolist())
+                    # ИЗМЕНЕНО: Фильтр по подкатегориям
+                    subcategory_filter = st.selectbox(
+                        "Фильтр по подкатегории:",
+                        options=['Все подкатегории'] + sorted(export_df['Подкатегория'].unique().tolist())
                     )
                 
                 with col2:
@@ -701,8 +771,9 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
                 # Применяем фильтры
                 filtered_df = export_df.copy()
                 
-                if category_filter != 'Все категории':
-                    filtered_df = filtered_df[filtered_df['Категория'] == category_filter]
+                # ИЗМЕНЕНО: Фильтрация по подкатегориям
+                if subcategory_filter != 'Все подкатегории':
+                    filtered_df = filtered_df[filtered_df['Подкатегория'] == subcategory_filter]
                 
                 if efficiency_filter != 'Все':
                     filtered_df = filtered_df[filtered_df['Эффективность'] == efficiency_filter]
@@ -715,25 +786,54 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
                     filtered_df,
                     use_container_width=True,
                     column_config={
-                        'Общие продажи': st.column_config.NumberColumn(format="%.0f"),
-                        'Средние продажи': st.column_config.NumberColumn(format="%.0f"),
-                        'Доля A товаров (%)': st.column_config.ProgressColumn(
+                        'Общие продажи': st.column_config.NumberColumn(
+                            "Общие продажи",
+                            format="%.0f"
+                        ),
+                        'Средние продажи': st.column_config.NumberColumn(
+                            "Средние продажи", 
+                            format="%.0f"
+                        ),
+                        'Доля A товаров (%)': st.column_config.NumberColumn(
                             "Доля A товаров (%)",
+                            format="%.1f%%",
                             min_value=0,
-                            max_value=100,
+                            max_value=100
                         )
-                        # УДАЛИЛИ SelectColumn - это вызывало ошибку
+                        # УБРАЛИ ProgressColumn - он некорректно отображает проценты
                     }
                 )
                 
                 if len(filtered_df) != len(export_df):
                     st.info(f"Показано {len(filtered_df)} из {len(export_df)} подкатегорий")
                 
+                # Показываем статистику по отфильтрованным данным
+                if len(filtered_df) > 0:
+                    st.markdown("### 📊 Статистика по отфильтрованным данным:")
+                    
+                    stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                    
+                    with stat_col1:
+                        total_items_filtered = filtered_df['Всего товаров'].sum()
+                        st.metric("Всего товаров", total_items_filtered)
+                    
+                    with stat_col2:
+                        total_a_items = filtered_df['A товары'].sum()
+                        st.metric("A товары", total_a_items)
+                    
+                    with stat_col3:
+                        avg_a_percentage = filtered_df['Доля A товаров (%)'].mean()
+                        st.metric("Средняя доля A (%)", f"{avg_a_percentage:.1f}%")
+                    
+                    with stat_col4:
+                        total_sales = filtered_df['Общие продажи'].sum()
+                        st.metric("Общие продажи", f"{total_sales:,.0f}")
+                
                 # Кнопка экспорта
                 st.download_button(
-                    label="📥 Скачать таблицу CSV",
+                    label="📥 Скачать отфильтрованную таблицу CSV",
                     data=filtered_df.to_csv(index=False, encoding='utf-8-sig'),
-                    file_name=f"subcategory_abc_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                    file_name=f"subcategory_abc_filtered_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime="text/csv"
                 )
         
@@ -746,19 +846,35 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
             if visualizations:
                 # График товаров по подкатегориям
                 if 'subcategory_items' in visualizations:
-                    st.plotly_chart(visualizations['subcategory_items'], use_container_width=True)
+                    st.plotly_chart(
+                        visualizations['subcategory_items'], 
+                        use_container_width=True,
+                        key="subcategory_items_chart"
+                    )
                 
                 # График продаж по подкатегориям
                 if 'subcategory_sales' in visualizations:
-                    st.plotly_chart(visualizations['subcategory_sales'], use_container_width=True)
+                    st.plotly_chart(
+                        visualizations['subcategory_sales'], 
+                        use_container_width=True,
+                        key="subcategory_sales_chart"
+                    )
                 
                 # ABC распределение
                 if 'abc_distribution' in visualizations:
-                    st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
+                    st.plotly_chart(
+                        visualizations['abc_distribution'], 
+                        use_container_width=True,
+                        key="subcategory_abc_distribution_chart"
+                    )
                 
                 # Парето-анализ
                 if 'pareto' in visualizations:
-                    st.plotly_chart(visualizations['pareto'], use_container_width=True)
+                    st.plotly_chart(
+                        visualizations['pareto'], 
+                        use_container_width=True,
+                        key="subcategory_pareto_chart"
+                    )
             else:
                 st.warning("Не удалось создать визуализации")
         
@@ -893,7 +1009,11 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
                             color_continuous_scale='Blues'
                         )
                         fig_category.update_xaxes(tickangle=45)
-                        st.plotly_chart(fig_category, use_container_width=True)
+                        st.plotly_chart(
+                            fig_category, 
+                            use_container_width=True,
+                            key=f"category_chart_{selected_category.replace(' ', '_')}"
+                        )
         
         with tab5:
             st.subheader("💡 Рекомендации по управлению подкатегориями")
@@ -966,7 +1086,11 @@ def create_subcategory_abc_interface(abc_data: pd.DataFrame = None):
                             'Доля A товаров (%)': 'Эффективность (% A товаров)'
                         }
                     )
-                    st.plotly_chart(fig_efficiency, use_container_width=True)
+                    st.plotly_chart(
+                        fig_efficiency, 
+                        use_container_width=True,
+                        key="efficiency_scatter_chart"
+                    )
         
         # Экспорт всех результатов
         st.subheader("📤 Экспорт результатов")

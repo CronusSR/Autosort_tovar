@@ -17,6 +17,12 @@ except ImportError:
     PRICE_FEATURES_AVAILABLE = False
     st.sidebar.warning("⚠️ Модули цен не найдены")
 
+try:
+    from complete_price_integration import complete_price_integration_setup, show_price_integration_status_in_streamlit
+    PRICE_INTEGRATION_AVAILABLE = True
+except ImportError:
+    PRICE_INTEGRATION_AVAILABLE = False
+
 import json
 import numpy as np
 import streamlit as st
@@ -1470,6 +1476,12 @@ def main():
     """Основная функция приложения"""
     # Инициализация системы
     system = init_system()
+
+    if PRICE_INTEGRATION_AVAILABLE:
+        complete_price_integration_setup(system)
+        
+        # Показываем статус в sidebar
+        show_price_integration_status_in_streamlit(system)
 
     if PRICE_FEATURES_AVAILABLE:
         apply_price_fixes_to_system(system)

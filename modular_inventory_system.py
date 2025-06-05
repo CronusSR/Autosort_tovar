@@ -152,9 +152,12 @@ class ModularInventorySystem:
             print(f"Ошибка экспорта подкатегорий: {str(e)}")
             return None
 
-    def load_sales_file_updated(self, file_content) -> Dict:
+    def load_sales_file_updated_with_prices(self, file_content) -> dict:
+        """
+        ИСПРАВЛЕННАЯ загрузка файла продаж с извлечением цен из колонки 12
+        """
         try:
-            print("🔄 Обработка файла с ИСПРАВЛЕННОЙ логикой ADS (номенклатура в колонке B)...")
+            print("🔄 Обработка файла с ИСПРАВЛЕННОЙ логикой ADS + ЦЕНЫ (колонка 12)...")
         
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
@@ -168,10 +171,12 @@ class ModularInventorySystem:
             start_col_index = 12  # Колонка M
             end_col_index = 28    # Колонка AB+1 (не включается)
             start_row = 3         # Строка 4 (индекс 3)
-            nomenclature_col = 1  # Колонка B (индекс 1) - ИСПРАВЛЕНО!
+            nomenclature_col = 1  # Колонка B (индекс 1)
+            price_col = 11        # НОВОЕ: Колонка 12 "Посл. закупка" (индекс 11)
             
-            print(f"📋 ИСПРАВЛЕННАЯ ЛОГИКА:")
+            print(f"📋 ИСПРАВЛЕННАЯ ЛОГИКА С ЦЕНАМИ:")
             print(f"   • Номенклатура: Колонка B (индекс {nomenclature_col})")
+            print(f"   • ЦЕНЫ: Колонка 12 'Посл. закупка' (индекс {price_col})")
             print(f"   • Данные продаж: колонки {start_col_index}:{end_col_index} (M:AB)")
             print(f"   • Начальная строка: {start_row+1}")
             
@@ -182,8 +187,12 @@ class ModularInventorySystem:
                     'error': f'Недостаточно колонок в файле. Нужно минимум {end_col_index}, есть {df.shape[1]}'
                 }
             
-            # Получаем номенклатуру из колонки B (индекс 1) - ИСПРАВЛЕНО!
+            # Получаем номенклатуру из колонки B (индекс 1)
             nomenclature_data = df.iloc[start_row:, nomenclature_col].copy()
+            
+            # НОВОЕ: Получаем цены из колонки 12 (индекс 11)
+            price_data = df.iloc[start_row:, price_col].copy()
+            print(f"💰 Извлечение цен из колонки 12 (индекс {price_col})...")
             
             # Очищаем номенклатуру
             print("🧹 Очистка номенклатуры из колонки B...")
@@ -211,6 +220,8 @@ class ModularInventorySystem:
             print("📈 Извлечение данных из диапазона M4:AB...")
             
             sales_data_list = []
+            prices_processed = 0
+            prices_found = 0
             
             for idx in valid_indices:
                 item_name = str(nomenclature_clean.loc[idx]).strip()
@@ -220,6 +231,18 @@ class ModularInventorySystem:
                 
                 # Преобразуем в числовой формат, заменяя NaN и пустые на 0
                 row_sales_numeric = pd.to_numeric(row_sales_data, errors='coerce').fillna(0)
+                
+                # НОВОЕ: Извлекаем цену для данного товара
+                try:
+                    item_price = pd.to_numeric(price_data.loc[idx], errors='coerce')
+                    if pd.isna(item_price) or item_price < 0:
+                        item_price = 0.0
+                    else:
+                        prices_found += 1
+                    prices_processed += 1
+                except:
+                    item_price = 0.0
+                    prices_processed += 1
                 
                 # НОВАЯ ФОРМУЛА РАСЧЕТА ADS:
                 # 1. Получаем среднее значение от M4:AB4
@@ -233,7 +256,8 @@ class ModularInventorySystem:
                     'ads': ads_value,
                     'average_value': average_value,
                     'total_sales': row_sales_numeric.sum(),  # Для совместимости
-                    'monthly_data': row_sales_numeric.tolist()
+                    'monthly_data': row_sales_numeric.tolist(),
+                    'last_purchase_price': float(item_price)  # НОВОЕ: ДОБАВЛЯЕМ ЦЕНУ
                 })
             
             # Создаем DataFrame
@@ -241,7 +265,19 @@ class ModularInventorySystem:
             
             # Сохраняем результаты в системе
             self.sales_data = ads_df
-            self.calculated_ads = ads_df[['номенклатура', 'ads', 'average_value', 'total_sales']].copy()
+            self.calculated_ads = ads_df[['номенклатура', 'ads', 'average_value', 'total_sales', 'last_purchase_price']].copy()
+            
+            # НОВОЕ: Статистика по ценам
+            print(f"\n💰 СТАТИСТИКА ЦЕН:")
+            print(f"   Цен обработано: {prices_processed}")
+            print(f"   Цен найдено: {prices_found}")
+            print(f"   Покрытие ценами: {(prices_found/prices_processed*100):.1f}%")
+            
+            if prices_found > 0:
+                valid_prices = ads_df[ads_df['last_purchase_price'] > 0]['last_purchase_price']
+                print(f"   Средняя цена: {valid_prices.mean():.2f}")
+                print(f"   Мин. цена: {valid_prices.min():.2f}")
+                print(f"   Макс. цена: {valid_prices.max():.2f}")
             
             # Создаем JSON данные для системы
             json_output = {
@@ -249,16 +285,22 @@ class ModularInventorySystem:
                     'file_processed_at': pd.Timestamp.now().isoformat(),
                     'total_items': len(ads_df),
                     'nomenclature_column': 'B',
+                    'price_column': '12 (Посл. закупка)',  # НОВОЕ
                     'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
-                    'calculation_method': 'average_monthly_divided_by_30',
+                    'calculation_method': 'average_monthly_divided_by_30_with_prices',
                     'formula': 'ADS = (среднее от M4:AB4) / 30',
-                    'last_row_excluded': True
+                    'last_row_excluded': True,
+                    'prices_extracted': True,  # НОВОЕ
+                    'prices_found': prices_found,  # НОВОЕ
+                    'price_coverage': f"{(prices_found/prices_processed*100):.1f}%"  # НОВОЕ
                 },
                 'summary_stats': {
                     'total_ads': float(ads_df['ads'].sum()),
                     'average_ads': float(ads_df['ads'].mean()),
                     'max_ads': float(ads_df['ads'].max()),
-                    'min_ads': float(ads_df['ads'].min())
+                    'min_ads': float(ads_df['ads'].min()),
+                    'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum()),  # НОВОЕ
+                    'average_price': float(valid_prices.mean()) if prices_found > 0 else 0  # НОВОЕ
                 },
                 'items': [
                     {
@@ -266,7 +308,8 @@ class ModularInventorySystem:
                         'ads_daily': row['ads'],
                         'average_monthly': row['average_value'],
                         'total_period': row['total_sales'],
-                        'monthly_data': row['monthly_data']
+                        'monthly_data': row['monthly_data'],
+                        'last_purchase_price': row['last_purchase_price']  # НОВОЕ: ДОБАВЛЯЕМ ЦЕНУ В JSON
                     }
                     for _, row in ads_df.iterrows()
                 ]
@@ -280,40 +323,197 @@ class ModularInventorySystem:
             # Статистика
             positive_ads_count = len(ads_df[ads_df['ads'] > 0])
             
-            print(f"\n📊 РЕЗУЛЬТАТЫ ИСПРАВЛЕННОЙ ЛОГИКИ:")
+            print(f"\n📊 РЕЗУЛЬТАТЫ ИСПРАВЛЕННОЙ ЛОГИКИ С ЦЕНАМИ:")
             print("=" * 60)
             print(f"Номенклатура читается из: Колонка B")
+            print(f"ЦЕНЫ читаются из: Колонка 12 'Посл. закупка'")
             print(f"Обработано товаров: {len(ads_df)}")
-            print(f"Диапазон: M{start_row+1}:AB{start_row+1+len(ads_df)}")
+            print(f"Диапазон продаж: M{start_row+1}:AB{start_row+1+len(ads_df)}")
             print(f"Формула: ADS = (среднее месячное) / 30")
             print(f"Общий ADS: {ads_df['ads'].sum():.2f}")
             print(f"Средний ADS: {ads_df['ads'].mean():.4f}")
             print(f"Товаров с положительным ADS: {positive_ads_count}")
+            print(f"Товаров с ценами: {prices_found}/{len(ads_df)}")
             
-            # Топ товары
-            print(f"\n🏆 Топ-5 товаров по новому ADS:")
+            # Топ товары с ценами
+            print(f"\n🏆 Топ-5 товаров по новому ADS (с ценами):")
             top_sellers = ads_df.nlargest(5, 'ads')
             for i, (_, row) in enumerate(top_sellers.iterrows(), 1):
-                print(f"  {i}. {row['номенклатура'][:50]:<50} | ADS: {row['ads']:>8.4f}")
+                price_info = f"Цена: {row['last_purchase_price']:.2f} ₽" if row['last_purchase_price'] > 0 else "Цена: не указана"
+                print(f"  {i}. {row['номенклатура'][:40]:<40} | ADS: {row['ads']:>8.4f} | {price_info}")
             
             return {
                 'success': True,
                 'total_items': len(ads_df),
                 'nomenclature_column': 'B',
+                'price_column': '12 (Посл. закупка)',  # НОВОЕ
                 'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
-                'calculation_method': 'average_monthly_divided_by_30_fixed',
+                'calculation_method': 'average_monthly_divided_by_30_with_prices',
                 'formula': 'ADS = (среднее от M4:AB4) / 30',
                 'total_ads': ads_df['ads'].sum(),
                 'average_ads': ads_df['ads'].mean(),
                 'items_with_positive_ads': positive_ads_count,
                 'json_data_created': True,
-                'last_row_excluded': True
+                'last_row_excluded': True,
+                'prices_extracted': True,  # НОВОЕ
+                'prices_found': prices_found,  # НОВОЕ
+                'price_coverage_percentage': (prices_found/prices_processed*100) if prices_processed > 0 else 0,  # НОВОЕ
+                'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum())  # НОВОЕ
             }
         except Exception as e:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': f"Ошибка загрузки файла продаж: {str(e)}"}
+    
+    def apply_ads_price_fix_to_system(system):
+        """
+        Применение исправленного метода load_sales_file_updated к системе
+        """
+        import types
+        
+        print("🔧 Применяем исправление ADS с поддержкой цен...")
+        
+        # Заменяем метод в системе
+        system.load_sales_file_updated = types.MethodType(load_sales_file_updated_with_prices, system)
+        
+        print("✅ Метод load_sales_file_updated обновлен!")
+        print("💰 Теперь поддерживается:")
+        print("   - Извлечение цен из колонки 12 'Посл. закупка'")
+        print("   - Добавление цен в ADS расчеты")
+        print("   - Статистика по ценам")
+        print("   - JSON с ценовой информацией")
+        print("   - Расчет стоимости запасов")
+        
+        return True
+    
+    def check_prices_in_ads_data(system):
+        """
+        Проверка наличия ценовых данных в рассчитанном ADS
+        """
+        print("🔍 ПРОВЕРКА ЦЕНОВЫХ ДАННЫХ В ADS")
+        print("-" * 40)
+        
+        if not hasattr(system, 'calculated_ads') or system.calculated_ads is None:
+            print("❌ ADS не рассчитан")
+            return False
+        
+        ads_data = system.calculated_ads
+        
+        # Проверяем наличие колонки цен
+        has_price_column = 'last_purchase_price' in ads_data.columns
+        print(f"{'✅' if has_price_column else '❌'} Колонка 'last_purchase_price' в ADS: {has_price_column}")
+        
+        if has_price_column:
+            total_items = len(ads_data)
+            items_with_price = len(ads_data[ads_data['last_purchase_price'] > 0])
+            items_without_price = total_items - items_with_price
+            
+            print(f"📊 Статистика цен:")
+            print(f"   Всего товаров: {total_items}")
+            print(f"   С ценами: {items_with_price}")
+            print(f"   Без цен: {items_without_price}")
+            print(f"   Покрытие: {(items_with_price/total_items*100):.1f}%")
+            
+            if items_with_price > 0:
+                valid_prices = ads_data[ads_data['last_purchase_price'] > 0]['last_purchase_price']
+                print(f"   Средняя цена: {valid_prices.mean():.2f} ₽")
+                print(f"   Мин. цена: {valid_prices.min():.2f} ₽")
+                print(f"   Макс. цена: {valid_prices.max():.2f} ₽")
+                
+                # Топ-3 по цене
+                print(f"\n💎 Топ-3 самых дорогих товара:")
+                top_expensive = ads_data[ads_data['last_purchase_price'] > 0].nlargest(3, 'last_purchase_price')
+                for i, (_, row) in enumerate(top_expensive.iterrows(), 1):
+                    print(f"   {i}. {row['номенклатура'][:50]} - {row['last_purchase_price']:.2f} ₽")
+            
+            return True
+        else:
+            print("💡 Рекомендации:")
+            print("   1. Убедитесь что ADS файл содержит колонку 12 'Посл. закупка'")
+            print("   2. Примените исправление: apply_ads_price_fix_to_system(system)")
+            print("   3. Перезагрузите ADS файл")
+            
+            return False
+        
+    def demo_ads_with_prices(system):
+        """
+        Демонстрация работы ADS с ценами
+        """
+        print("🎭 ДЕМОНСТРАЦИЯ ADS С ЦЕНАМИ")
+        print("=" * 50)
+        
+        # Применяем исправление
+        apply_ads_price_fix_to_system(system)
+        
+        # Проверяем состояние
+        if not hasattr(system, 'calculated_ads') or system.calculated_ads is None:
+            print("⚠️ ADS не рассчитан. Загрузите файл продаж.")
+            return False
+        
+        # Проверяем цены
+        has_prices = check_prices_in_ads_data(system)
+        
+        if has_prices:
+            print("\n🎯 СИСТЕМА ГОТОВА К РАБОТЕ С ЦЕНАМИ!")
+            print("   Теперь можно:")
+            print("   - Рассчитывать минимальные запасы в денежном выражении")
+            print("   - Сравнивать остатки с учетом стоимости")
+            print("   - Приоритизировать дефицит по денежному выражению")
+            print("   - Экспортировать отчеты с ценами")
+        else:
+            print("\n⚠️ ЦЕНЫ НЕ НАЙДЕНЫ")
+            print("   Проверьте структуру ADS файла и перезагрузите его")
+        
+        return has_prices
+
+    def instructions_for_ads_price_fix():
+        """
+        Инструкции по применению исправления ADS с ценами
+        """
+        
+        print("""
+        🔧 ИНСТРУКЦИЯ ПО ИСПРАВЛЕНИЮ LOAD_SALES_FILE_UPDATED:
+        
+        1. ПРОБЛЕМА:
+           В текущем коде load_sales_file_updated отсутствует обработка цен
+           
+        2. РЕШЕНИЕ:
+           Заменить метод на версию с поддержкой колонки 12 "Посл. закупка"
+           
+        3. ПРИМЕНЕНИЕ:
+           
+           # В вашем коде добавьте:
+           from ads_price_fix import apply_ads_price_fix_to_system
+           
+           # Примените исправление:
+           apply_ads_price_fix_to_system(system)
+           
+           # Проверьте результат:
+           check_prices_in_ads_data(system)
+        
+        4. СТРУКТУРА ADS ФАЙЛА:
+           
+           | A   | B            | ... | L (12)      | M   | N   | ... | AB  |
+           |-----|--------------|-----|-------------|-----|-----|-----|-----|
+           | Код | Номенклатура | ... | Посл.закупка| Янв | Фев | ... | Дек |
+           | 001 | Товар 1      | ... | 150.50      | 10  | 15  | ... | 20  |
+           | 002 | Товар 2      | ... | 89.30       | 5   | 8   | ... | 12  |
+        
+        5. РЕЗУЛЬТАТ:
+           ✅ ADS расчеты будут содержать колонку 'last_purchase_price'
+           ✅ Все последующие денежные расчеты будут работать
+           ✅ Отчеты будут включать денежное выражение
+        
+        6. ПРОВЕРКА:
+           После применения исправления убедитесь что:
+           - system.calculated_ads содержит колонку 'last_purchase_price'
+           - В колонке есть числовые значения > 0
+           - Покрытие ценами > 0%
+        """)
+
+    if __name__ == "__main__":
+        instructions_for_ads_price_fix()
 
     def get_ads_json_data(self) -> str:
         """

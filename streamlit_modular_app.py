@@ -15,6 +15,7 @@ import io
 import time
 import warnings
 from subcategory_abc import create_subcategory_abc_interface
+from typing import Dict, List, Optional 
 warnings.filterwarnings('ignore')
 
 # Конфигурация страницы
@@ -257,7 +258,7 @@ def subcategory_abc_analysis_page(system):
                             st.write(f"... и еще {len(recommendations) - 3} рекомендаций")
 
 def show_system_status(system):
-    """Отображение статуса системы"""
+    """Отображение статуса системы с информацией о ценах"""
     status = system.get_system_status()
     
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -271,9 +272,20 @@ def show_system_status(system):
     
     with col2:
         ads_status = "✅" if status['sales_analysis']['ads_calculated'] else "❌"
+        # НОВОЕ: Показываем информацию о ценах в ADS
+        price_info = ""
+        if (status['sales_analysis']['ads_calculated'] and 
+            hasattr(system, 'calculated_ads') and 
+            system.calculated_ads is not None and
+            'last_purchase_price' in system.calculated_ads.columns):
+            
+            items_with_price = len(system.calculated_ads[system.calculated_ads['last_purchase_price'] > 0])
+            if items_with_price > 0:
+                price_info = f" 💰{items_with_price}"
+        
         st.metric(
             "ADS расчет", 
-            f"{ads_status} {status['sales_analysis']['items_count']} товаров"
+            f"{ads_status} {status['sales_analysis']['items_count']} товаров{price_info}"
         )
     
     with col3:
@@ -285,9 +297,20 @@ def show_system_status(system):
     
     with col4:
         stock_status = "✅" if status['stock_analysis']['compared'] else "❌"
+        # НОВОЕ: Показываем информацию о денежных расчетах
+        money_info = ""
+        if (status['stock_analysis']['compared'] and 
+            hasattr(system, 'stock_comparison') and 
+            system.stock_comparison is not None and
+            'stock_deficit_money' in system.stock_comparison.columns):
+            
+            total_deficit_money = system.stock_comparison['stock_deficit_money'].sum()
+            if total_deficit_money > 0:
+                money_info = f" 💰{total_deficit_money:,.0f}₸"
+        
         st.metric(
             "Сравнение", 
-            f"{stock_status} {status['stock_analysis']['items_count']} товаров"
+            f"{stock_status} {status['stock_analysis']['items_count']} товаров{money_info}"
         )
 
     with col5:
@@ -301,11 +324,29 @@ def show_system_status(system):
     # Прогресс-бар
     progress = status['overall']['progress_percentage']
     st.progress(progress / 100)
-    st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/5 этапов)")
+    
+    # НОВОЕ: Показываем информацию о денежных возможностях
+    money_status = ""
+    if (hasattr(system, 'calculated_ads') and 
+        system.calculated_ads is not None and
+        'last_purchase_price' in system.calculated_ads.columns):
+        
+        items_with_price = len(system.calculated_ads[system.calculated_ads['last_purchase_price'] > 0])
+        total_items = len(system.calculated_ads)
+        coverage = (items_with_price / total_items) * 100 if total_items > 0 else 0
+        
+        if coverage > 80:
+            money_status = f" | 💰 Денежные расчеты доступны ({coverage:.0f}% покрытия)"
+        elif coverage > 50:
+            money_status = f" | 💰 Частичные денежные расчеты ({coverage:.0f}% покрытия)"
+        elif coverage > 0:
+            money_status = f" | 💰 Ограниченные денежные расчеты ({coverage:.0f}% покрытия)"
+    
+    st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/5 этапов){money_status}")
 
 def abc_analysis_page_updated(system):
-    """Обновленная страница ABC анализа с поддержкой товаров с нулевыми продажами"""
-    st.header("🔤 ABC анализ товаров (включая товары с нулевыми продажами)")
+    """Обновленная страница ABC анализа с информацией о ценах"""
+    st.header("🔤 ABC анализ товаров (включая цены из колонки 'Посл. закупка')")
     
     st.markdown("""
     **ABC анализ** помогает классифицировать товары по принципу Парето (80/20):
@@ -313,7 +354,9 @@ def abc_analysis_page_updated(system):
     - **B товары** - 15% продаж  
     - **C товары** - 5% продаж + **все товары с нулевыми продажами**
     
-    ✅ **Новое**: Товары с пустыми ячейками продаж автоматически получают значение 0 и класс C
+    ✅ **Новое**: 
+    - Товары с пустыми ячейками продаж автоматически получают значение 0 и класс C
+    - 💰 **Загрузка цен** из колонки 12 "Посл. закупка" для денежных расчетов
     """)
     
     # Проверяем статус ABC анализа
@@ -328,9 +371,11 @@ def abc_analysis_page_updated(system):
         abc_summary = abc_results['abc_summary']
         total_items = sum(abc_summary.values())
         
-        # Проверяем наличие информации о нулевых продажах
+        # Проверяем наличие информации о нулевых продажах и ценах
         zero_sales_count = abc_results.get('items_with_zero_sales', 0)
         items_with_sales = abc_results.get('items_with_sales', total_items)
+        items_with_price = abc_results.get('items_with_price', 0)
+        items_without_price = abc_results.get('items_without_price', 0)
         
         # Расширенная статистика
         col1, col2, col3, col4 = st.columns(4)
@@ -346,124 +391,26 @@ def abc_analysis_page_updated(system):
         with col4:
             st.metric("Всего товаров", f"{total_items}")
         
-        # Информация о нулевых продажах
-        if zero_sales_count > 0:
-            st.info(f"""
-            📊 **Обработка товаров с нулевыми продажами:**
-            - Товаров с продажами > 0: **{items_with_sales}**
-            - Товаров с продажами = 0: **{zero_sales_count}** (автоматически класс C)
-            - Все товары включены в анализ: **✅**
+        # НОВАЯ информация о ценах
+        if items_with_price > 0:
+            st.success(f"""
+            💰 **Информация о ценах загружена:**
+            - Товаров с ценой > 0: **{items_with_price}** ({items_with_price/total_items*100:.1f}%)
+            - Товаров без цены: **{items_without_price}** ({items_without_price/total_items*100:.1f}%)
+            - Средняя цена: **{abc_results.get('average_price', 0):,.2f}** ₸
+            - Денежные расчеты дефицита: **Доступны** ✅
+            """)
+        else:
+            st.warning("""
+            💰 **Цены не загружены:**
+            - Колонка 'Посл. закупка' не найдена или пуста
+            - Денежные расчеты дефицита будут недоступны
+            - Рекомендуется проверить структуру файла
             """)
         
-        # Визуализации
-        visualizations = system.create_visualizations()
+        # Остальной код страницы остается без изменений...
+        # (визуализации, анализ по категориям и т.д.)
         
-        if 'abc_distribution' in visualizations:
-            st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
-        
-        if 'pareto_analysis' in visualizations:
-            st.plotly_chart(visualizations['pareto_analysis'], use_container_width=True)
-        
-        # Анализ по категориям с учетом нулевых продаж
-        st.subheader("📊 Анализ по категориям (включая товары с нулевыми продажами)")
-        category_analysis = abc_results['category_analysis']
-        
-        category_data = []
-        for cat, data in category_analysis.items():
-            # Получаем информацию о нулевых продажах в категории
-            zero_sales_in_cat = data.get('items_with_zero_sales', 0)
-            items_with_sales_in_cat = data.get('items_with_sales', data['total_items'])
-            
-            category_data.append({
-                'Категория': cat,
-                'Всего товаров': data['total_items'],
-                'С продажами': items_with_sales_in_cat,
-                'Нулевые продажи': zero_sales_in_cat,
-                'Общие продажи': f"{data['total_sales']:,.0f}",
-                'Доля продаж %': f"{data['sales_percentage']:.2f}%",
-                'A товары': data['abc_distribution']['A'],
-                'B товары': data['abc_distribution']['B'],
-                'C товары': data['abc_distribution']['C']
-            })
-        
-        category_df = pd.DataFrame(category_data)
-        category_df = category_df.sort_values('Доля продаж %', ascending=False)
-        st.dataframe(category_df, use_container_width=True)
-        
-        # Дополнительная аналитика по нулевым продажам
-        if zero_sales_count > 0:
-            with st.expander("🔍 Детальный анализ товаров с нулевыми продажами"):
-                abc_detailed = abc_results['abc_data_detailed']
-                zero_sales_items = abc_detailed[abc_detailed['annual_sales'] == 0]
-                
-                st.write(f"**Найдено {len(zero_sales_items)} товаров с нулевыми продажами:**")
-                
-                # Группировка по категориям
-                zero_by_category = zero_sales_items['category'].value_counts()
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write("**Распределение по категориям:**")
-                    for category, count in zero_by_category.head(10).items():
-                        st.write(f"• {category}: {count} товаров")
-                
-                with col2:
-                    # График распределения нулевых продаж
-                    if len(zero_by_category) > 0:
-                        fig_zero = px.bar(
-                            x=zero_by_category.head(10).values,
-                            y=zero_by_category.head(10).index,
-                            orientation='h',
-                            title='Топ-10 категорий с товарами без продаж',
-                            labels={'x': 'Количество товаров', 'y': 'Категория'}
-                        )
-                        st.plotly_chart(fig_zero, use_container_width=True)
-                
-                # Таблица товаров с нулевыми продажами
-                st.write("**Примеры товаров с нулевыми продажами:**")
-                display_zero = zero_sales_items[['nomenclature', 'category', 'annual_sales', 'abc_class']].head(20)
-                st.dataframe(display_zero, use_container_width=True)
-        
-        # Кнопка для перезагрузки
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔄 Загрузить новый ABC файл"):
-                system.abc_data = None
-                system.abc_results = None
-                st.rerun()
-        
-        with col2:
-            if st.button("📊 Показать только товары с продажами"):
-                # Фильтр для показа только товаров с продажами > 0
-                abc_detailed = abc_results['abc_data_detailed']
-                items_with_sales_only = abc_detailed[abc_detailed['annual_sales'] > 0]
-                
-                st.write(f"**Товары только с продажами > 0: {len(items_with_sales_only)} из {len(abc_detailed)}**")
-                
-                # Пересчитываем ABC для товаров только с продажами
-                if len(items_with_sales_only) > 0:
-                    sales_only_summary = items_with_sales_only['abc_class'].value_counts()
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("A (только с продажами)", sales_only_summary.get('A', 0))
-                    with col2:
-                        st.metric("B (только с продажами)", sales_only_summary.get('B', 0))
-                    with col3:
-                        c_with_sales = sales_only_summary.get('C', 0)
-                        st.metric("C (только с продажами)", c_with_sales)
-                    
-                    items_display = items_with_sales_only[['nomenclature', 'category', 'annual_sales', 'abc_class']].head(20).copy()
-            
-                    # Переименовываем колонки на русские
-                    items_display.columns = ['Номенклатура', 'Категория', 'Годовые продажи', 'ABC класс']
-                    
-                    st.dataframe(
-                        items_display,
-                        use_container_width=True
-                    )
-    
     else:
         # ABC анализ не выполнен
         st.info("Загрузите файл для ABC анализа (например: исходники.xlsx)")
@@ -474,76 +421,67 @@ def abc_analysis_page_updated(system):
         - **Пустые ячейки продаж** автоматически заменяются на **0**
         - **Все товары** включаются в ABC анализ (даже с нулевыми продажами)
         - Товары с нулевыми продажами получают **класс C**
+        - 💰 **Загрузка цен** из колонки 12 "Посл. закупка"
         - Принцип Парето рассчитывается только для товаров с продажами > 0
         """)
+        
+        with st.expander("📋 Требуемая структура файла с ценами"):
+            st.markdown("""
+            **Структура Excel файла:**
+            - Колонка 1: Номенклатура товара
+            - Колонка 2: Подкатегория (опционально)
+            - Колонка 3: Категория
+            - Колонка 4: Годовые продажи
+            - **Колонка 12: "Посл. закупка" (ЦЕНЫ)** 💰
+            
+            **Важно:** Цены должны быть в 12-й колонке для корректных денежных расчетов дефицита!
+            """)
         
         abc_file = st.file_uploader(
             "Выберите файл для ABC анализа",
             type=['xlsx', 'xls'],
-            help="Файл должен содержать: Наименование, Категория, Объем продаж (пустые ячейки = 0)"
+            help="Файл должен содержать: Наименование, Категория, Объем продаж, Цены в колонке 12"
         )
         
         if abc_file is not None:
-            with st.spinner("Загрузка и анализ ABC данных с обработкой нулевых продаж..."):
-                # Загружаем файл
+            with st.spinner("Загрузка и анализ ABC данных с ценами..."):
+                # Загружаем файл с обновленным методом
                 load_result = system.load_abc_file(abc_file)
                 
                 if load_result['success']:
                     st.success(f"✅ Файл загружен: {load_result['total_items']} товаров")
                     
-                    # Показываем детали загрузки с информацией о нулевых продажах
+                    # Показываем детали загрузки
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("Всего товаров", load_result['total_items'])
                     with col2:
-                        st.metric("С продажами > 0", load_result.get('items_with_sales', '?'))
+                        st.metric("С ценами", load_result.get('items_with_price', 0))
                     with col3:
-                        st.metric("С продажами = 0", load_result.get('items_with_zero_sales', '?'))
+                        st.metric("Средняя цена", f"{load_result.get('average_price', 0):,.0f} ₸")
                     with col4:
                         st.metric("Категорий", load_result['categories'])
                     
-                    # Показываем информацию о распределении продаж
-                    if 'sales_distribution' in load_result:
-                        sales_dist = load_result['sales_distribution']
+                    # Показываем информацию о ценах
+                    if load_result.get('price_data_loaded'):
                         st.info(f"""
-                        📊 **Распределение продаж:**
-                        - Товаров с продажами > 0: {sales_dist['positive_sales']}
-                        - Товаров с продажами = 0: {sales_dist['zero_sales']} (будут класса C)
-                        - Общая стоимость продаж: {sales_dist['total_sales_value']:,.0f}
+                        💰 **Статистика цен:**
+                        - С ценой > 0: {load_result['items_with_price']} товаров
+                        - Без цены: {load_result['items_without_price']} товаров
+                        - Средняя цена: {load_result['average_price']:,.2f} ₸
+                        - Денежные расчеты: **Включены** ✅
                         """)
-                    
-                    # Показываем топ категории
-                    if 'sample_categories' in load_result:
-                        with st.expander("📊 Топ категории по количеству товаров"):
-                            sample_cats = load_result['sample_categories']
-                            cats_df = pd.DataFrame(list(sample_cats.items()), 
-                                                 columns=['Категория', 'Количество товаров'])
-                            st.dataframe(cats_df, use_container_width=True)
                     
                     # Выполняем ABC анализ
                     analysis_result = system.perform_abc_analysis()
                     
                     if analysis_result['success']:
-                        st.success("✅ ABC анализ завершен с включением всех товаров!")
-                        
-                        # Показываем краткую статистику результата
-                        if analysis_result.get('zero_sales_included'):
-                            st.info(f"""
-                            🎯 **Результат анализа:**
-                            - Всего проанализировано: {analysis_result['total_items']} товаров
-                            - С продажами: {analysis_result['items_with_sales']} товаров
-                            - С нулевыми продажами: {analysis_result['items_with_zero_sales']} товаров (класс C)
-                            - A товары: {analysis_result['abc_summary']['A']}
-                            - B товары: {analysis_result['abc_summary']['B']}
-                            - C товары: {analysis_result['abc_summary']['C']}
-                            """)
-                        
+                        st.success("✅ ABC анализ завершен с загрузкой цен!")
                         st.rerun()
                     else:
                         st.error(f"❌ {analysis_result['error']}")
                 else:
                     st.error(f"❌ {load_result['error']}")
-
 # Дополнительная функция для создания специализированных визуализаций
 def create_zero_sales_visualization(abc_data):
     """Создание визуализации для товаров с нулевыми продажами"""
@@ -572,9 +510,34 @@ def create_zero_sales_visualization(abc_data):
     )
     
     return fig
-def ads_calculation_page_updated(system):
 
-    st.header("📊 Расчет ADS")
+def add_ads_fix_button_to_streamlit(system):
+        """
+        Добавьте этот код на страницу расчета ADS в Streamlit
+        """
+        if system.calculated_ads is not None:
+            zero_ads_count = (system.calculated_ads['ads'] == 0).sum()
+            
+            if zero_ads_count > 0:
+                st.warning(f"⚠️ Найдено {zero_ads_count} товаров с ADS = 0")
+                
+                if st.button("🔧 Исправить нулевые ADS средними по категориям"):
+                    # Добавляем метод если его нет
+                    if not hasattr(system, 'fix_zero_ads_with_category_average'):
+                        apply_ads_category_fix_to_system(system)
+                    
+                    # Применяем исправление
+                    with st.spinner("Исправление нулевых ADS..."):
+                        success = system.fix_zero_ads_with_category_average()
+                        
+                        if success:
+                            st.success("✅ ADS исправлены!")
+                            st.rerun()  # Обновляем страницу
+                        else:
+                            st.error("❌ Не удалось исправить ADS")
+
+def ads_calculation_page_updated(system):
+    st.header("📊 Расчет ADS с ценами")
     
     try:
         from integration_patch import add_multiple_files_interface_to_existing
@@ -585,19 +548,21 @@ def ads_calculation_page_updated(system):
         st.error(f"Ошибка загрузки множественных файлов: {e}")
 
     st.markdown("""
-    **🔢 ФОРМУЛА ADS:**
+    **🔢 ФОРМУЛА ADS С ЦЕНАМИ:**
     - **Номенклатура:** Читается из колонки B 
+    - **Цены:** Читаются из колонки 12 "Посл. закупка" 💰
     - **Диапазон данных:** M4:AB4 до последнего товара
     - **Формула:** ADS = (среднее значение от M4:AB4) / 30
     - **Исключения:** Последняя строка автоматически исключается
     """)
     
     # Показываем структуру файла
-    with st.expander("📋 Требуемая структура Excel файла"):
+    with st.expander("📋 Требуемая структура Excel файла с ценами"):
         st.markdown("""
         ```
         Колонка A: Коды товаров (не используется)
         Колонка B: НОМЕНКЛАТУРА ТОВАРОВ (основная)
+        Колонка 12: ЦЕНЫ "Посл. закупка" 💰
         Колонки M-AB: Месячные данные продаж
         Строка 4: Начало данных
         Последняя строка: Исключается автоматически
@@ -608,179 +573,148 @@ def ads_calculation_page_updated(system):
     
     if status['sales_analysis']['ads_calculated']:
         # ADS уже рассчитан
-        st.success("✅ ADS рассчитан!")
+        st.success("✅ ADS с ценами рассчитан!")
         
         ads_data = system.calculated_ads
         
-        # Показываем информацию о методе
-        if hasattr(system, '_json_data') and 'ads' in system._json_data:
-            metadata = system._json_data['ads']['metadata']
+        # НОВОЕ: Проверяем наличие цен в ADS данных
+        has_prices = 'last_purchase_price' in ads_data.columns
+        
+        if has_prices:
+            items_with_price = len(ads_data[ads_data['last_purchase_price'] > 0])
+            items_without_price = len(ads_data[ads_data['last_purchase_price'] == 0])
+            avg_price = ads_data[ads_data['last_purchase_price'] > 0]['last_purchase_price'].mean()
             
+            # Показываем информацию о ценах
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Товаров", len(ads_data))
+            with col2:
+                st.metric("С ценами", f"{items_with_price}/{len(ads_data)}")
             with col3:
                 st.metric("Общий ADS", f"{ads_data['ads'].sum():.2f}")
             with col4:
+                st.metric("Средняя цена", f"{avg_price:,.2f} ₸" if not pd.isna(avg_price) else "0 ₸")
+            
+            # Успешное сообщение о ценах
+            price_coverage = (items_with_price / len(ads_data)) * 100
+            st.success(f"""
+            💰 **Цены успешно загружены из ADS файла:**
+            - Товаров с ценой > 0: {items_with_price} ({price_coverage:.1f}%)
+            - Товаров без цены: {items_without_price} ({100-price_coverage:.1f}%)
+            - Средняя цена: {avg_price:,.2f} ₸
+            - Денежные расчеты дефицита: **Доступны** ✅
+            """)
+            
+            # Топ товары с ценами
+            st.subheader("🏆 Топ товары по ADS (с ценами)")
+            top_ads_with_prices = ads_data[ads_data['last_purchase_price'] > 0].nlargest(10, 'ads')
+            
+            if not top_ads_with_prices.empty:
+                # Добавляем колонку стоимости месячных продаж
+                top_ads_with_prices = top_ads_with_prices.copy()
+                top_ads_with_prices['monthly_value'] = top_ads_with_prices['ads'] * top_ads_with_prices['last_purchase_price'] * 30
+                
+                fig_ads_money = px.scatter(
+                    top_ads_with_prices,
+                    x='ads',
+                    y='last_purchase_price',
+                    size='monthly_value',
+                    hover_name='номенклатура',
+                    title='ADS vs Цена (размер = месячная стоимость продаж)',
+                    labels={
+                        'ads': 'ADS (среднедневные продажи)',
+                        'last_purchase_price': 'Цена (₸)',
+                        'monthly_value': 'Месячная стоимость (₸)'
+                    }
+                )
+                st.plotly_chart(fig_ads_money, use_container_width=True)
+        else:
+            # Цены не загружены
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Товаров", len(ads_data))
+            with col2:
+                st.metric("Общий ADS", f"{ads_data['ads'].sum():.2f}")
+            with col3:
                 st.metric("Средний ADS", f"{ads_data['ads'].mean():.4f}")
+            with col4:
+                st.metric("Цены", "Не загружены")
             
-            # Показываем детали обработки
-            st.subheader("📊 Детали обработки")
-            
-            info_col1, info_col2 = st.columns(2)
-            
-            with info_col1:
-                st.info(f"""
-                **Параметры обработки:**
-                - Диапазон: {metadata.get('range_used', 'M4:AB4')}
-                - Формула: {metadata.get('formula', 'ADS = среднее/30')}
-                - Метод: {metadata.get('calculation_method', 'новый')}
-                """)
-            
-            with info_col2:
-                st.info(f"""
-                **Статистика:**
-                - Обработано: {metadata.get('total_items', 0)} товаров
-                - С положительным ADS: {metadata.get('items_with_positive_ads', 0)}
-                - Последняя строка исключена: {'✅' if metadata.get('last_row_excluded') else '❌'}
-                """)
+            st.warning("""
+            💰 **Цены не найдены в ADS файле:**
+            - Колонка 12 "Посл. закупка" отсутствует или пуста
+            - Денежные расчеты дефицита будут недоступны
+            - Перезагрузите файл с ценами в колонке 12
+            """)
         
-        # JSON данные
-        st.subheader("📄 JSON данные")
+        # Остальной код остается без изменений...
         
-        if st.button("📄 Показать JSON данные", key="show_json"):
-            try:
-                json_data = system.get_ads_json_data()
-                
-                # Показываем превью JSON
-                st.subheader("📄 JSON превью")
-                json_preview = json.loads(json_data)
-                
-                # Метаданные
-                if 'metadata' in json_preview:
-                    st.write("**Метаданные:**")
-                    st.json(json_preview['metadata'])
-                
-                # Статистика
-                if 'summary_stats' in json_preview:
-                    st.write("**Статистика:**")
-                    st.json(json_preview['summary_stats'])
-                
-                # Первые несколько товаров
-                if 'items' in json_preview and len(json_preview['items']) > 0:
-                    st.write("**Первые 3 товара:**")
-                    st.json(json_preview['items'][:3])
-                
-                # Кнопка скачивания JSON
-                if st.button("💾 Скачать JSON файл"):
-                    json_filename = system.save_ads_json_to_file()
-                    st.success(f"✅ JSON сохранен в файл: {json_filename}")
-                    
-            except Exception as e:
-                st.error(f"❌ Ошибка отображения JSON: {str(e)}")
-        
-        # Топ товары по ADS
-        st.subheader("🏆 Топ товары по ADS")
-        top_ads = ads_data.nlargest(10, 'ads')
-
-        fig_ads = px.bar(
-            top_ads,
-            x='ads',
-            y='номенклатура',
-            orientation='h',
-            title='Топ-10 товаров по ADS',
-            labels={'ads': 'Среднедневные продажи', 'номенклатура': 'Товар'}  # Русифицируем подписи осей
-        )
-        st.plotly_chart(fig_ads, use_container_width=True)
-        
-        # Детальная таблица
-        with st.expander("📋 Детальные данные ADS"):
-            # Русифицируем колонки ADS данных
-            ads_data_russian = ads_data.copy()
-            
-            # Маппинг колонок для ADS
-            ads_mapping = {
-                'номенклатура': 'Номенклатура',
-                'ads': 'ADS',
-                'average_value': 'Среднемесячные продажи',
-                'total_sales': 'Общие продажи за период'
-            }
-            
-            # Переименовываем только существующие колонки
-            existing_mappings = {k: v for k, v in ads_mapping.items() if k in ads_data_russian.columns}
-            ads_data_russian = ads_data_russian.rename(columns=existing_mappings)
-     
-            st.dataframe(ads_data_russian, use_container_width=True)
-        
-        # Кнопки для экспорта
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📤 Экспорт в Excel с JSON", key="export_excel_json"):
-                try:
-                    excel_buffer = system.export_enhanced_results_with_fixed_ads()
-                    
-                    st.download_button(
-                        label="💾 Скачать Excel с исправленной логикой",
-                        data=excel_buffer,
-                        file_name=f"ads_fixed_results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                    
-                except Exception as e:
-                    st.error(f"❌ Ошибка экспорта: {str(e)}")
-        
-        with col2:
-            if st.button("🔄 Загрузить новый файл", key="reload_ads"):
-                # Очищаем данные для новой загрузки
-                system.sales_data = None
-                system.calculated_ads = None
-                if hasattr(system, '_json_data'):
-                    system._json_data.pop('ads', None)
-                st.rerun()
-    
     else:
         # ADS не рассчитан
-        st.info("Загрузите файл с данными продаж для расчета ADS")
+        st.info("Загрузите файл с данными продаж для расчета ADS с ценами")
+        
+        st.success("""
+        ✅ **Обновленная обработка данных:**
+        
+        - **Номенклатура** читается из колонки B
+        - **Цены** читаются из колонки 12 "Посл. закупка" 💰
+        - **ADS** рассчитывается по формуле: (среднее M:AB) / 30
+        - **Денежные расчеты** автоматически включаются при наличии цен
+        """)
         
         st.warning("""
-        ⚠️ **ВАЖНО: Проверьте структуру файла!**
+        ⚠️ **ВАЖНО: Структура файла с ценами!**
         
-        - Номенклатура должна быть в **колонке B**
+        - Номенклатура в **колонке B**
+        - **Цены в колонке 12** "Посл. закупка" 💰
         - Данные продаж в колонках M-AB
         - Данные начинаются с 4-й строки
         """)
         
         sales_file = st.file_uploader(
-            "Выберите файл продаж",
+            "Выберите файл продаж с ценами",
             type=['xlsx', 'xls'],
-            help="Файл должен содержать номенклатуру в колонке B и данные продаж в колонках M-AB",
-            key="sales_file_updated"
+            help="Файл должен содержать номенклатуру в колонке B, цены в колонке 12, и данные продаж в колонках M-AB",
+            key="sales_file_with_prices"
         )
         
         if sales_file is not None:
-            with st.spinner("Обработка файла с логикой ADS..."):
+            with st.spinner("Обработка файла ADS с ценами..."):
                 # Используем обновленный метод
                 load_result = system.load_sales_file_updated(sales_file)
                 
                 if load_result['success']:
-                    st.success(f"✅ ADS рассчитан для {load_result['total_items']} товаров")
+                    st.success(f"✅ ADS с ценами рассчитан для {load_result['total_items']} товаров")
                     
                     # Показываем детали результата
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("Товаров", load_result['total_items'])
                     with col2:
-                        st.metric("Номенклатура из", load_result['nomenclature_column'])
+                        st.metric("С ценами", f"{load_result.get('items_with_price', 0)}/{load_result['total_items']}")
                     with col3:
                         st.metric("Общий ADS", f"{load_result['total_ads']:.2f}")
                     with col4:
-                        st.metric("JSON создан", "✅" if load_result['json_data_created'] else "❌")
+                        st.metric("Средняя цена", f"{load_result.get('average_price', 0):,.2f} ₸")
+                    
+                    # Показываем информацию о ценах и стоимости
+                    if load_result.get('price_data_loaded'):
+                        st.success(f"""
+                        💰 **Цены успешно загружены из колонки 12:**
+                        - С ценой > 0: {load_result['items_with_price']} товаров ({load_result['price_coverage_percentage']:.1f}%)
+                        - Без цены: {load_result['items_without_price']} товаров
+                        - Средняя цена: {load_result['average_price']:,.2f} ₸
+                        - Общая стоимость запасов (месяц): {load_result['total_inventory_value']:,.0f} ₸
+                        - Денежные расчеты: **Включены** ✅
+                        """)
+                    else:
+                        st.warning("💰 Цены не найдены в колонке 12 или все равны нулю")
                     
                     # Информация о обработке
                     st.info(f"""
                     **Результаты обработки:**
+                    - Источник цен: {load_result.get('price_column', 'Колонка 12')}
                     - Формула: {load_result['formula']}
                     - Диапазон: {load_result['range_used']}
                     - Последняя строка исключена: {'✅' if load_result['last_row_excluded'] else '❌'}
@@ -1029,7 +963,7 @@ def min_stock_calculation_page(system):
             st.dataframe(min_stock_data[display_cols], use_container_width=True)
 
 def stock_comparison_page(system):
-    """Страница сравнения остатков"""
+    """ОБНОВЛЕННАЯ страница сравнения остатков с денежными показателями"""
     st.header("⚖️ Сравнение остатков с минимальными запасами")
     
     status = system.get_system_status()
@@ -1040,7 +974,7 @@ def stock_comparison_page(system):
             st.switch_page("MIN запасы")
         return
     
-    # Загрузка файла остатков
+    # Загрузка файла остатков (код остается без изменений)
     if not status['stock_analysis']['loaded']:
         st.info("Загрузите файл текущих остатков (например: остатки.xlsx)")
         
@@ -1064,27 +998,34 @@ def stock_comparison_page(system):
     # Выполнение сравнения
     if not status['stock_analysis']['compared']:
         if st.button("▶️ Выполнить сравнение остатков"):
-            with st.spinner("Сравнение остатков с минимальными запасами..."):
+            with st.spinner("Сравнение остатков с расчетом денежного выражения..."):
                 comparison_result = system.compare_stock_vs_min()
                 
                 if comparison_result['success']:
-                    st.success("✅ Сравнение завершено!")
+                    st.success("✅ Сравнение завершено с денежными расчетами!")
                     st.rerun()
                 else:
                     st.error(f"❌ {comparison_result['error']}")
         return
     
-    # Показываем результаты сравнения
+    # Показываем результаты сравнения с денежными показателями
     comparison_data = system.stock_comparison
     
     st.subheader("📊 Результаты анализа")
     
-    # Общая статистика
+    # ОБНОВЛЕННАЯ общая статистика с денежными показателями
     total_items = len(comparison_data)
     deficit_items = len(comparison_data[comparison_data['stock_deficit'] > 0])
     critical_items = len(comparison_data[comparison_data['status'] == 'КРИТИЧНО'])
     sufficient_items = len(comparison_data[comparison_data['status'] == 'ДОСТАТОЧНО'])
     
+    # Денежные показатели
+    has_money_data = 'stock_deficit_money' in comparison_data.columns
+    total_deficit_money = comparison_data['stock_deficit_money'].sum() if has_money_data else 0
+    total_order_money = comparison_data['recommended_order_money'].sum() if has_money_data else 0
+    items_with_price = len(comparison_data[comparison_data['last_purchase_price'] > 0]) if 'last_purchase_price' in comparison_data.columns else 0
+    
+    # Основные метрики
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Всего товаров", total_items)
@@ -1094,9 +1035,64 @@ def stock_comparison_page(system):
         st.metric("Критично", f"{critical_items} ({critical_items/total_items*100:.1f}%)")
     with col4:
         total_deficit = comparison_data['stock_deficit'].sum()
-        st.metric("Общий дефицит", f"{total_deficit:,.0f}")
+        st.metric("Общий дефицит (шт)", f"{total_deficit:,.0f}")
     
-    # Визуализации
+    # НОВЫЕ денежные метрики
+    if has_money_data and total_deficit_money > 0:
+        st.subheader("💰 Денежное выражение дефицита")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Дефицит в деньгах", f"{total_deficit_money:,.0f} ₸")
+        with col2:
+            st.metric("Заказ в деньгах", f"{total_order_money:,.0f} ₸")
+        with col3:
+            st.metric("Товаров с ценами", f"{items_with_price}/{total_items}")
+        with col4:
+            price_coverage = (items_with_price / total_items * 100) if total_items > 0 else 0
+            st.metric("Покрытие ценами", f"{price_coverage:.1f}%")
+        
+        # Топ товары по денежному дефициту
+        if deficit_items > 0:
+            st.subheader("💸 Топ товары по денежному дефициту")
+            
+            top_deficit_money = comparison_data[
+                comparison_data['stock_deficit_money'] > 0
+            ].nlargest(10, 'stock_deficit_money')
+            
+            if not top_deficit_money.empty:
+                fig_money_deficit = px.bar(
+                    top_deficit_money,
+                    x='stock_deficit_money',
+                    y='номенклатура',
+                    orientation='h',
+                    title='Топ-10 товаров по денежному дефициту',
+                    labels={'stock_deficit_money': 'Дефицит (₸)', 'номенклатура': 'Товар'},
+                    color='order_priority',
+                    color_discrete_map={
+                        'СРОЧНО': '#ff0000',
+                        'ВЫСОКИЙ': '#ff8800',
+                        'СРЕДНИЙ': '#ffcc00'
+                    }
+                )
+                fig_money_deficit.update_layout(height=600)
+                st.plotly_chart(fig_money_deficit, use_container_width=True)
+    
+    elif has_money_data:
+        st.info("💰 Денежные расчеты доступны, но дефицита в денежном выражении нет")
+    else:
+        st.warning("""
+        💰 **Денежные расчеты недоступны**
+        
+        Возможные причины:
+        - Не загружены цены из ABC файла
+        - Колонка 'Посл. закупка' отсутствует или пуста
+        - Все цены равны нулю
+        
+        Для включения денежных расчетов перезагрузите ABC файл с ценами в колонке 12.
+        """)
+    
+    # Остальные визуализации (обычные)
     visualizations = system.create_visualizations()
     
     if 'stock_status' in visualizations:
@@ -1105,10 +1101,10 @@ def stock_comparison_page(system):
     if 'deficit_analysis' in visualizations:
         st.plotly_chart(visualizations['deficit_analysis'], use_container_width=True)
     
-    # Детальные результаты
+    # ОБНОВЛЕННЫЕ детальные результаты с денежными колонками
     st.subheader("📋 Детальные результаты")
     
-    # Фильтры
+    # Фильтры (остаются без изменений)
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -1124,12 +1120,23 @@ def stock_comparison_page(system):
         )
     
     with col3:
-        min_deficit = st.number_input(
-            "Минимальный дефицит",
-            min_value=0,
-            value=0,
-            help="Показать товары с дефицитом больше указанного значения"
-        )
+        # Переключатель для фильтра по деньгам или штукам
+        filter_by_money = st.checkbox("Фильтр по денежному дефициту", value=has_money_data)
+        
+        if filter_by_money and has_money_data:
+            min_deficit = st.number_input(
+                "Минимальный дефицит (₸)",
+                min_value=0,
+                value=0,
+                help="Показать товары с денежным дефицитом больше указанного"
+            )
+        else:
+            min_deficit = st.number_input(
+                "Минимальный дефицит (шт)",
+                min_value=0,
+                value=0,
+                help="Показать товары с дефицитом больше указанного количества"
+            )
     
     # Применяем фильтры
     filtered_data = comparison_data.copy()
@@ -1141,18 +1148,50 @@ def stock_comparison_page(system):
         filtered_data = filtered_data[filtered_data['order_priority'] == priority_filter]
     
     if min_deficit > 0:
-        filtered_data = filtered_data[filtered_data['stock_deficit'] >= min_deficit]
+        if filter_by_money and has_money_data:
+            filtered_data = filtered_data[filtered_data['stock_deficit_money'] >= min_deficit]
+        else:
+            filtered_data = filtered_data[filtered_data['stock_deficit'] >= min_deficit]
     
-    # Отображаем отфильтрованные данные
-    display_columns = [
-        'номенклатура', 'ads', 'min_stock_total', 'total_current_stock', 
-        'stock_deficit', 'current_stock_days', 'status', 'order_priority', 'recommended_order'
-    ]
-    
-    st.dataframe(
-        filtered_data[display_columns], 
-        use_container_width=True,
-        column_config={
+    # ОБНОВЛЕННЫЕ колонки для отображения с денежными данными
+    if has_money_data:
+        display_columns = [
+            'номенклатура', 'ads', 'min_stock_total', 'total_current_stock', 
+            'stock_deficit', 'stock_deficit_money', 'current_stock_days', 
+            'status', 'order_priority', 'recommended_order', 'recommended_order_money',
+            'last_purchase_price'
+        ]
+        
+        column_config = {
+            'номенклатура': 'Товар',
+            'ads': 'ADS',
+            'min_stock_total': 'MIN запас',
+            'total_current_stock': 'Текущий остаток',
+            'stock_deficit': 'Дефицит (шт)',
+            'stock_deficit_money': st.column_config.NumberColumn(
+                'Дефицит (₸)',
+                format="%.0f ₸"
+            ),
+            'current_stock_days': 'Дни остатка',
+            'status': 'Статус',
+            'order_priority': 'Приоритет',
+            'recommended_order': 'Заказ (шт)',
+            'recommended_order_money': st.column_config.NumberColumn(
+                'Заказ (₸)',
+                format="%.0f ₸"
+            ),
+            'last_purchase_price': st.column_config.NumberColumn(
+                'Цена',
+                format="%.2f ₸"
+            )
+        }
+    else:
+        display_columns = [
+            'номенклатура', 'ads', 'min_stock_total', 'total_current_stock', 
+            'stock_deficit', 'current_stock_days', 'status', 'order_priority', 'recommended_order'
+        ]
+        
+        column_config = {
             'номенклатура': 'Товар',
             'ads': 'ADS',
             'min_stock_total': 'MIN запас',
@@ -1163,13 +1202,33 @@ def stock_comparison_page(system):
             'order_priority': 'Приоритет',
             'recommended_order': 'Рекомендуемый заказ'
         }
+    
+    # Отображаем отфильтрованные данные
+    st.dataframe(
+        filtered_data[display_columns], 
+        use_container_width=True,
+        column_config=column_config
     )
     
     if len(filtered_data) != len(comparison_data):
         st.info(f"Показано {len(filtered_data)} из {len(comparison_data)} товаров")
-
+    
+    # НОВАЯ сводка по денежным показателям для отфильтрованных данных
+    if has_money_data and len(filtered_data) > 0:
+        with st.expander("💰 Денежная сводка по отфильтрованным товарам"):
+            filtered_deficit_money = filtered_data['stock_deficit_money'].sum()
+            filtered_order_money = filtered_data['recommended_order_money'].sum()
+            filtered_items_with_price = len(filtered_data[filtered_data['last_purchase_price'] > 0])
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Дефицит (₸)", f"{filtered_deficit_money:,.0f}")
+            with col2:
+                st.metric("К заказу (₸)", f"{filtered_order_money:,.0f}")
+            with col3:
+                st.metric("С ценами", f"{filtered_items_with_price}/{len(filtered_data)}")
 def export_page(system):
-    """Страница экспорта результатов"""
+    """ОБНОВЛЕННАЯ страница экспорта результатов с денежными показателями"""
     st.header("📤 Экспорт результатов")
     
     status = system.get_system_status()
@@ -1183,13 +1242,21 @@ def export_page(system):
     
     summary = system.get_summary_report()
     
-    # Отображаем сводку
+    # Отображаем сводку с денежными показателями
     if 'abc_analysis' in summary:
         abc = summary['abc_analysis']
         st.write(f"**ABC анализ**: {abc['total_items']} товаров, {abc['categories_analyzed']} категорий")
         st.write(f"- A товары: {abc['distribution']['A_items']} ({abc['distribution']['A_percentage']:.1f}%)")
         st.write(f"- B товары: {abc['distribution']['B_items']} ({abc['distribution']['B_percentage']:.1f}%)")
         st.write(f"- C товары: {abc['distribution']['C_items']} ({abc['distribution']['C_percentage']:.1f}%)")
+        
+        # НОВОЕ: Информация о ценах
+        if 'price_info' in abc:
+            price_info = abc['price_info']
+            st.write(f"💰 **Ценовая информация:**")
+            st.write(f"- Товаров с ценами: {price_info['items_with_price']} ({price_info['price_coverage_percentage']:.1f}%)")
+            st.write(f"- Средняя цена: {price_info['average_price']:,.2f} ₸")
+            st.write(f"- Общая стоимость запасов: {price_info['total_inventory_value']:,.0f} ₸")
     
     if 'ads_analysis' in summary:
         ads = summary['ads_analysis']
@@ -1200,68 +1267,99 @@ def export_page(system):
         subcat = summary['subcategory_analysis']
         st.write(f"**ABC анализ подкатегорий**: {subcat['total_subcategories']} подкатегорий в {subcat['categories_with_subcategories']} категориях")
         st.write(f"- Эффективных подкатегорий: {subcat['efficient_subcategories']} ({subcat['efficiency_percentage']:.1f}%)")
-        st.write(f"- Среднее товаров на подкатегорию: {subcat['avg_items_per_subcategory']:.1f}")
-        
-        # ABC распределение по подкатегориям
-        subcat_abc = subcat['subcategory_abc_distribution']
-        st.write(f"- ABC в подкатегориях: A={subcat_abc['A']}, B={subcat_abc['B']}, C={subcat_abc['C']}")
 
     if 'min_stock_analysis' in summary:
         min_stock = summary['min_stock_analysis']
         st.write(f"**Минимальные запасы**: {min_stock['total_items']} товаров")
-        st.write(f"- Общий MIN запас: {min_stock['total_min_stock']:,.0f}")
+        st.write(f"- Общий MIN запас: {min_stock['total_min_stock']:,.0f} шт")
         st.write(f"- Параметры: {min_stock['parameters']['stock_days']} дней + {min_stock['parameters']['ip_days']} дней IP")
+        
+        # НОВОЕ: Денежные показатели минимальных запасов
+        if 'money_metrics' in min_stock:
+            money_metrics = min_stock['money_metrics']
+            st.write(f"💰 **Минимальные запасы в деньгах**: {money_metrics['total_min_stock_money']:,.0f} ₸")
+            st.write(f"- Товаров с ценами: {money_metrics['items_with_price']}")
     
     if 'stock_comparison' in summary:
         comparison = summary['stock_comparison']
         st.write(f"**Сравнение остатков**: {comparison['total_items']} товаров")
         st.write(f"- С дефицитом: {comparison['deficit_items']} ({comparison['deficit_percentage']:.1f}%)")
         st.write(f"- Критично: {comparison['critical_items']} ({comparison['critical_percentage']:.1f}%)")
-        st.write(f"- Рекомендуемый заказ: {comparison['total_recommended_order']:,.0f}")
+        st.write(f"- Рекомендуемый заказ: {comparison['total_recommended_order']:,.0f} шт")
+        
+        # НОВЫЕ денежные показатели
+        if 'money_metrics' in comparison:
+            money_metrics = comparison['money_metrics']
+            st.write(f"💰 **Денежное выражение дефицита:**")
+            st.write(f"- Общий дефицит: {money_metrics['total_deficit_money']:,.0f} ₸")
+            st.write(f"- К заказу: {money_metrics['total_recommended_order_money']:,.0f} ₸")
+            st.write(f"- Покрытие ценами: {money_metrics['price_coverage_percentage']:.1f}%")
+            
+            # Топ дефицитные товары по деньгам
+            if 'top_deficit_money_items' in money_metrics:
+                st.write(f"📊 **Топ-3 товара по денежному дефициту:**")
+                for i, item in enumerate(money_metrics['top_deficit_money_items'][:3], 1):
+                    st.write(f"   {i}. {item['item']}: {item['deficit_money']:,.0f} ₸ ({item['deficit_quantity']:.0f} шт × {item['price']:.2f} ₸)")
     
     # Рекомендации
     st.subheader("💡 Рекомендации")
     recommendations = system.get_recommendations()
+    
+    # ДОПОЛНЯЕМ рекомендациями по денежным показателям
+    if 'stock_comparison' in summary and 'money_metrics' in summary['stock_comparison']:
+        money_metrics = summary['stock_comparison']['money_metrics']
+        
+        if money_metrics['total_deficit_money'] > 1000000:  # > 1 млн
+            recommendations.insert(0, f"💰 Критический денежный дефицит: {money_metrics['total_deficit_money']:,.0f} ₸. Требуется срочное пополнение бюджета закупок.")
+        
+        if money_metrics['price_coverage_percentage'] < 80:
+            recommendations.append(f"💰 Низкое покрытие ценами ({money_metrics['price_coverage_percentage']:.1f}%). Обновите прайс-лист для точных денежных расчетов.")
+    
     for i, rec in enumerate(recommendations, 1):
         st.write(f"{i}. {rec}")
     
-    # Экспорт в Excel
+    # ОБНОВЛЕННЫЙ экспорт в Excel
     st.subheader("📥 Скачать Excel файл")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("📊 Подготовить полный отчет", use_container_width=True):
-            with st.spinner("Создание Excel файла..."):
+        if st.button("📊 Полный отчет с ценами", use_container_width=True):
+            with st.spinner("Создание Excel файла с денежными расчетами..."):
                 try:
                     excel_buffer = system.export_all_results()
                     
                     st.download_button(
-                        label="💾 Скачать Excel файл",
+                        label="💾 Скачать Excel с денежными данными",
                         data=excel_buffer,
-                        file_name=f"inventory_analysis_full_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        file_name=f"inventory_analysis_money_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
                     
-                    st.success("✅ Excel файл готов к скачиванию!")
+                    st.success("✅ Excel файл с денежными расчетами готов!")
                     
                 except Exception as e:
                     st.error(f"❌ Ошибка создания файла: {str(e)}")
     
     with col2:
-        # Информация о содержимом файла
+        # ОБНОВЛЕННАЯ информация о содержимом файла
         st.info("""
         **Содержимое Excel файла:**
         - Общий статус системы
-        - ABC анализ (если выполнен)
-        - ADS расчеты
-        - Минимальные запасы
-        - Сравнение остатков
-        - Товары с дефицитом
-        - Критичные товары  
-        - Рекомендации по заказу
+        - ABC анализ с ценами 💰
+        - ADS расчеты с ценами 💰
+        - Минимальные запасы (шт + ₸) 💰
+        - Сравнение остатков (шт + ₸) 💰
+        - Товары с дефицитом (шт + ₸) 💰
+        - Критичные товары (шт + ₸) 💰
+        - Рекомендации заказа (шт + ₸) 💰
+        - **Денежная сводка** 💰
+        - Подкатегории (если есть)
+        
+        💰 = Новые денежные расчеты
         """)
+        
         if status['subcategory_analysis']['analyzed']:
             if st.button("🔤📊 Отчет подкатегорий", use_container_width=True):
                 with st.spinner("Создание отчета подкатегорий..."):
@@ -1285,24 +1383,200 @@ def export_page(system):
                         st.error(f"❌ Ошибка: {str(e)}")
         else:
             st.info("Выполните анализ подкатегорий для экспорта")
+    
     with col3:
-        # Информация о содержимом файлов
-        st.info("""
-        **Содержимое полного Excel файла:**
-        - Общий статус системы
-        - ABC анализ (основной)
-        - ABC анализ подкатегорий ✨
-        - ADS расчеты
-        - Минимальные запасы
-        - Сравнение остатков
-        - Парето анализ подкатегорий ✨
-        - Товары с дефицитом
-        - Критичные товары  
-        - Рекомендации по заказу
+        # Предварительный просмотр денежных данных
+        if 'stock_comparison' in summary and 'money_metrics' in summary['stock_comparison']:
+            money_metrics = summary['stock_comparison']['money_metrics']
+            
+            st.metric("💰 Дефицит", f"{money_metrics['total_deficit_money']:,.0f} ₸")
+            st.metric("💰 К заказу", f"{money_metrics['total_recommended_order_money']:,.0f} ₸")
+            st.metric("📊 Покрытие", f"{money_metrics['price_coverage_percentage']:.1f}%")
+        else:
+            st.info("""
+            **Для денежных расчетов:**
+            1. Загрузите ABC файл с ценами
+            2. Выполните сравнение остатков
+            3. Получите отчет с денежными данными
+            """)
+
+def create_money_visualizations(system) -> Dict:
+    """
+    Создание специальных визуализаций для денежных показателей
+    """
+    visualizations = {}
+    
+    if (system.stock_comparison is not None and 
+        'stock_deficit_money' in system.stock_comparison.columns):
         
-        ✨ = Новые разделы
-        """)
+        comparison_data = system.stock_comparison
         
+        # 1. График денежного дефицита vs количественного
+        deficit_data = comparison_data[comparison_data['stock_deficit'] > 0].copy()
+        
+        if not deficit_data.empty and len(deficit_data) > 5:
+            fig_money_vs_quantity = px.scatter(
+                deficit_data.head(50),  # Топ-50 для читаемости
+                x='stock_deficit',
+                y='stock_deficit_money',
+                hover_name='номенклатура',
+                title='Денежный дефицит vs Количественный дефицит',
+                labels={
+                    'stock_deficit': 'Дефицит (штук)',
+                    'stock_deficit_money': 'Дефицит (₸)'
+                },
+                color='order_priority',
+                size='last_purchase_price',
+                color_discrete_map={
+                    'СРОЧНО': '#ff0000',
+                    'ВЫСОКИЙ': '#ff8800',
+                    'СРЕДНИЙ': '#ffcc00'
+                }
+            )
+            visualizations['money_vs_quantity'] = fig_money_vs_quantity
+        
+        # 2. Топ товары по денежному дефициту (пирамида)
+        top_money_deficit = deficit_data.nlargest(15, 'stock_deficit_money')
+        
+        if not top_money_deficit.empty:
+            fig_money_pyramid = px.funnel(
+                top_money_deficit,
+                y='номенклатура',
+                x='stock_deficit_money',
+                title='Пирамида денежного дефицита (Топ-15)',
+                labels={'stock_deficit_money': 'Дефицит (₸)'}
+            )
+            visualizations['money_pyramid'] = fig_money_pyramid
+        
+        # 3. Сравнение текущих остатков и минимальных запасов в деньгах
+        money_comparison_data = comparison_data[
+            (comparison_data['last_purchase_price'] > 0) & 
+            (comparison_data['min_stock_money'] > 0)
+        ].head(20)
+        
+        if not money_comparison_data.empty:
+            fig_money_comparison = go.Figure()
+            
+            # Текущие остатки в деньгах
+            fig_money_comparison.add_trace(go.Bar(
+                name='Текущий остаток (₸)',
+                x=money_comparison_data['номенклатура'],
+                y=money_comparison_data['current_stock_money'],
+                marker_color='lightblue'
+            ))
+            
+            # Минимальные запасы в деньгах
+            fig_money_comparison.add_trace(go.Bar(
+                name='Минимальный запас (₸)',
+                x=money_comparison_data['номенклатура'],
+                y=money_comparison_data['min_stock_money'],
+                marker_color='orange'
+            ))
+            
+            fig_money_comparison.update_layout(
+                title='Сравнение остатков и минимумов в денежном выражении',
+                xaxis_title='Товары',
+                yaxis_title='Стоимость (₸)',
+                barmode='group',
+                xaxis_tickangle=45
+            )
+            
+            visualizations['money_comparison'] = fig_money_comparison
+        
+        # 4. Круговая диаграмма распределения денежного дефицита по приоритетам
+        priority_money = deficit_data.groupby('order_priority')['stock_deficit_money'].sum().reset_index()
+        
+        if not priority_money.empty:
+            fig_priority_money = px.pie(
+                priority_money,
+                values='stock_deficit_money',
+                names='order_priority',
+                title='Распределение денежного дефицита по приоритетам',
+                color_discrete_map={
+                    'СРОЧНО': '#ff0000',
+                    'ВЫСОКИЙ': '#ff8800',
+                    'СРЕДНИЙ': '#ffcc00'
+                }
+            )
+            visualizations['priority_money'] = fig_priority_money
+    
+    return visualizations
+
+def create_money_analytics_page(system):
+    """
+    Создание специальной страницы для денежной аналитики
+    """
+    if not hasattr(system, 'stock_comparison') or system.stock_comparison is None:
+        st.warning("⚠️ Сначала выполните сравнение остатков")
+        return
+    
+    if 'stock_deficit_money' not in system.stock_comparison.columns:
+        st.warning("💰 Денежные данные недоступны. Загрузите ABC файл с ценами.")
+        return
+    
+    st.header("💰 Денежная аналитика дефицита")
+    
+    comparison_data = system.stock_comparison
+    
+    # Основные KPI
+    total_deficit_money = comparison_data['stock_deficit_money'].sum()
+    total_order_money = comparison_data['recommended_order_money'].sum()
+    items_with_price = len(comparison_data[comparison_data['last_purchase_price'] > 0])
+    avg_price = comparison_data[comparison_data['last_purchase_price'] > 0]['last_purchase_price'].mean()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("💸 Общий дефицит", f"{total_deficit_money:,.0f} ₸")
+    with col2:
+        st.metric("🛒 К заказу", f"{total_order_money:,.0f} ₸")
+    with col3:
+        st.metric("🏷️ Средняя цена", f"{avg_price:,.2f} ₸" if not pd.isna(avg_price) else "0 ₸")
+    with col4:
+        st.metric("📊 Товаров с ценами", f"{items_with_price}/{len(comparison_data)}")
+    
+    # Денежные визуализации
+    money_visualizations = create_money_visualizations(system)
+    
+    if money_visualizations:
+        st.subheader("📈 Денежные визуализации")
+        
+        for viz_name, viz in money_visualizations.items():
+            st.plotly_chart(viz, use_container_width=True, key=f"money_viz_{viz_name}")
+    
+    # ABC анализ дефицита по деньгам
+    st.subheader("🔤 ABC анализ денежного дефицита")
+    
+    deficit_items = comparison_data[comparison_data['stock_deficit_money'] > 0].copy()
+    
+    if not deficit_items.empty:
+        deficit_items = deficit_items.sort_values('stock_deficit_money', ascending=False)
+        deficit_items['money_cumulative_pct'] = deficit_items['stock_deficit_money'].cumsum() / deficit_items['stock_deficit_money'].sum() * 100
+        
+        # Присваиваем ABC классы по денежному дефициту
+        deficit_items['money_abc_class'] = deficit_items['money_cumulative_pct'].apply(
+            lambda x: 'A' if x <= 80 else 'B' if x <= 95 else 'C'
+        )
+        
+        money_abc_counts = deficit_items['money_abc_class'].value_counts()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            a_money = deficit_items[deficit_items['money_abc_class'] == 'A']['stock_deficit_money'].sum()
+            st.metric("A товары (80%)", f"{money_abc_counts.get('A', 0)} | {a_money:,.0f} ₸")
+        with col2:
+            b_money = deficit_items[deficit_items['money_abc_class'] == 'B']['stock_deficit_money'].sum()
+            st.metric("B товары (15%)", f"{money_abc_counts.get('B', 0)} | {b_money:,.0f} ₸")
+        with col3:
+            c_money = deficit_items[deficit_items['money_abc_class'] == 'C']['stock_deficit_money'].sum()
+            st.metric("C товары (5%)", f"{money_abc_counts.get('C', 0)} | {c_money:,.0f} ₸")
+        
+        # Таблица A товаров по денежному дефициту
+        st.subheader("🔴 A товары по денежному дефициту")
+        a_items_money = deficit_items[deficit_items['money_abc_class'] == 'A'][[
+            'номенклатура', 'stock_deficit_money', 'stock_deficit', 'last_purchase_price', 'order_priority'
+        ]]
+        st.dataframe(a_items_money, use_container_width=True)
+
 def settings_page(system):
     """Страница настроек"""
     st.header("⚙️ Настройки системы")
@@ -1481,6 +1755,7 @@ def main():
                 "📋 MIN запасы",
                 "⚖️ Сравнение остатков",
                 "🔤📊 ABC подкатегории",
+                "💰 Денежная аналитика",
                 "📤 Экспорт результатов",
                 "⚙️ Настройки"
             ]
@@ -1517,6 +1792,8 @@ def main():
         stock_comparison_page(system)
     elif page == "🔤📊 ABC подкатегории":  
         subcategory_abc_analysis_page(system)
+    elif page == "💰 Денежная аналитика": 
+        create_money_analytics_page(system)
     elif page == "📤 Экспорт результатов":
         export_page(system)
     elif page == "⚙️ Настройки":

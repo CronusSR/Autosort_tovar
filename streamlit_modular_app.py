@@ -3,6 +3,20 @@
 """
 Модульное Streamlit приложение для системы анализа товарных запасов
 """
+try:
+    from price_integration_fix import apply_price_fixes_to_system, quick_price_check
+    from streamlit_deficit_money_update import (
+        stock_comparison_page_with_money, 
+        add_price_info_to_ads_page,
+        update_export_page_with_money,
+        show_money_integration_status,
+        integration_instructions
+    )
+    PRICE_FEATURES_AVAILABLE = True
+except ImportError:
+    PRICE_FEATURES_AVAILABLE = False
+    st.sidebar.warning("⚠️ Модули цен не найдены")
+
 import json
 import numpy as np
 import streamlit as st
@@ -64,6 +78,8 @@ def init_system():
     if 'inventory_system' not in st.session_state:
         st.session_state.inventory_system = ModularInventorySystem()
     return st.session_state.inventory_system
+
+
 
 def subcategory_abc_analysis_page(system):
     """Страница ABC анализа по подкатегориям"""
@@ -203,11 +219,7 @@ def subcategory_abc_analysis_page(system):
                 visualizations = system.subcategory_analyzer.create_subcategory_visualizations()
                 
                 if 'abc_distribution' in visualizations:
-                    st.plotly_chart(
-                        visualizations['abc_distribution'], 
-                        use_container_width=True,
-                        key="main_page_subcategory_abc_distribution"
-                    )
+                    st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
         
         # Основной интерфейс анализа подкатегорий
         st.markdown("---")
@@ -1458,10 +1470,19 @@ def main():
     """Основная функция приложения"""
     # Инициализация системы
     system = init_system()
+
+    if PRICE_FEATURES_AVAILABLE:
+        apply_price_fixes_to_system(system)
+        
+        # Добавляем статус цен в sidebar
+        show_money_integration_status(system)
+        integration_instructions()
     # Заголовок
     st.title("📦 Модульная система анализа товарных запасов")
     st.markdown("*Пошаговый анализ с выбором типа операции*")
     
+    
+
     # Боковая панель с навигацией
     with st.sidebar:
         st.header("🧭 Навигация")
@@ -1469,7 +1490,26 @@ def main():
         # Показываем статус системы
         st.subheader("📊 Статус системы")
         show_system_status(system)
+
+        if PRICE_FEATURES_AVAILABLE and st.button("🔍 Проверить цены"):
+            quick_price_check(system)
         
+        if page == "⚖️ Сравнение остатков":
+            if PRICE_FEATURES_AVAILABLE:
+                stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
+            else:
+                stock_comparison_page(system)  # Старая функция
+        
+        elif page == "📊 ADS расчет":
+            ads_calculation_page_updated(system)
+            if PRICE_FEATURES_AVAILABLE:
+                add_price_info_to_ads_page(system)  # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ЦЕНАХ
+        
+        elif page == "📤 Экспорт результатов":
+            export_page(system)
+            if PRICE_FEATURES_AVAILABLE:
+                update_export_page_with_money(system)  # ДОБАВЛЯЕМ ДЕНЕЖНЫЙ ЭКСПОРТ
+
         st.markdown("---")
         
         # Меню навигации

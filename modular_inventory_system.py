@@ -12,11 +12,19 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 import plotly.express as px
 import plotly.graph_objects as go
+from subcategory_abc import SubcategoryABCAnalyzer
+
+
+
 warnings.filterwarnings('ignore')
 
 class ModularInventorySystem:
     """Модульная система анализа товарных запасов"""
-    
+
+    def initialize_subcategory_analyzer(self):
+        """Инициализация анализатора подкатегорий"""
+        if not hasattr(self, 'subcategory_analyzer'):
+            self.subcategory_analyzer = SubcategoryABCAnalyzer()
     def __init__(self):
         # Данные по этапам
         self.abc_data = None
@@ -41,7 +49,109 @@ class ModularInventorySystem:
             'min_stock_days': 30,
             'safety_factor': 1.0
         }
-    
+    def perform_subcategory_abc_analysis(self) -> Dict:
+        """
+        Выполнение ABC анализа по подкатегориям
+        
+        Returns:
+            Dict с результатами анализа подкатегорий
+        """
+        if self.abc_data is None:
+            return {'success': False, 'error': 'Сначала выполните основной ABC анализ'}
+        
+        try:
+            # Инициализируем анализатор
+            self.initialize_subcategory_analyzer()
+            
+            # Загружаем данные
+            load_result = self.subcategory_analyzer.load_data_with_subcategories(self.abc_data)
+            
+            if not load_result['success']:
+                return load_result
+            
+            # Выполняем анализ
+            analysis_result = self.subcategory_analyzer.perform_subcategory_abc_analysis()
+            
+            if analysis_result['success']:
+                # Сохраняем результаты в основной системе
+                if not hasattr(self, 'subcategory_results'):
+                    self.subcategory_results = {}
+                
+                self.subcategory_results = {
+                    'analysis_data': analysis_result,
+                    'subcategory_details': self.subcategory_analyzer.subcategory_results,
+                    'pareto_analysis': self.subcategory_analyzer.get_subcategory_pareto_analysis(),
+                    'category_analysis': self.subcategory_analyzer.get_subcategory_analysis_by_category(),
+                    'recommendations': self.subcategory_analyzer.get_subcategory_recommendations()
+                }
+            
+            return analysis_result
+            
+        except Exception as e:
+            return {'success': False, 'error': f'Ошибка анализа подкатегорий: {str(e)}'}
+
+    def get_subcategory_summary_report(self) -> Dict:
+        """Получение сводного отчета по подкатегориям"""
+        if not hasattr(self, 'subcategory_results') or not self.subcategory_results:
+            return {}
+        
+        try:
+            analysis_data = self.subcategory_results['analysis_data']
+            subcategory_details = self.subcategory_results['subcategory_details']
+            
+            # Базовая статистика
+            total_subcategories = len(subcategory_details) if subcategory_details else 0
+            total_items = sum(data['total_items'] for data in subcategory_details.values()) if subcategory_details else 0
+            total_sales = sum(data['total_sales'] for data in subcategory_details.values()) if subcategory_details else 0
+            
+            # ABC распределение по подкатегориям
+            abc_distribution = {'A': 0, 'B': 0, 'C': 0}
+            if subcategory_details:
+                for data in subcategory_details.values():
+                    for abc_class, count in data['abc_distribution'].items():
+                        abc_distribution[abc_class] += count
+            
+            # Эффективность подкатегорий
+            efficient_subcategories = 0
+            if subcategory_details:
+                for data in subcategory_details.values():
+                    if data['total_items'] > 0:
+                        a_percentage = (data['abc_distribution']['A'] / data['total_items']) * 100
+                        if a_percentage > 20:  # Считаем эффективной если >20% A товаров
+                            efficient_subcategories += 1
+            
+            return {
+                'total_subcategories': total_subcategories,
+                'total_items': total_items,
+                'total_sales': float(total_sales),
+                'abc_distribution': abc_distribution,
+                'efficient_subcategories': efficient_subcategories,
+                'efficiency_percentage': (efficient_subcategories / total_subcategories * 100) if total_subcategories > 0 else 0,
+                'average_items_per_subcategory': total_items / total_subcategories if total_subcategories > 0 else 0,
+                'categories_analyzed': len(set(data['category'] for data in subcategory_details.values())) if subcategory_details else 0
+            }
+            
+        except Exception as e:
+            return {'error': f'Ошибка создания отчета: {str(e)}'}
+
+    def export_subcategory_results(self) -> io.BytesIO:
+        """Экспорт результатов анализа подкатегорий в Excel"""
+        if not hasattr(self, 'subcategory_analyzer') or not self.subcategory_analyzer.subcategory_results:
+            return None
+        
+        try:
+            from subcategory_abc import create_subcategory_excel_report
+            excel_buffer = create_subcategory_excel_report(self.subcategory_analyzer)
+            
+            if excel_buffer:
+                return io.BytesIO(excel_buffer)
+            else:
+                return None
+                
+        except Exception as e:
+            print(f"Ошибка экспорта подкатегорий: {str(e)}")
+            return None
+
     def load_sales_file_updated(self, file_content) -> Dict:
         try:
             print("🔄 Обработка файла с ИСПРАВЛЕННОЙ логикой ADS (номенклатура в колонке B)...")
@@ -801,7 +911,7 @@ class ModularInventorySystem:
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': f"Ошибка ABC анализа: {str(e)}"}
-        
+    
     def load_sales_file(self, file_content) -> Dict:
         """
         Загрузка файла продаж для расчета ADS
@@ -1186,6 +1296,11 @@ class ModularInventorySystem:
                 'loaded': self.stock_data is not None,
                 'compared': self.stock_comparison is not None,
                 'items_count': len(self.stock_data) if self.stock_data is not None else 0
+            },
+            'subcategory_analysis': {
+                'analyzed': hasattr(self, 'subcategory_results') and bool(self.subcategory_results),
+                'subcategories_count': 0,
+                'analyzer_loaded': hasattr(self, 'subcategory_analyzer')
             }
         }
         
@@ -1202,6 +1317,26 @@ class ModularInventorySystem:
             'total_steps': 4,
             'progress_percentage': (completed_steps / 4) * 100,
             'ready_for_export': completed_steps >= 2  # Минимум ADS + один из анализов
+        }
+        if status['subcategory_analysis']['analyzed']:
+            subcategory_summary = self.get_subcategory_summary_report()
+            if subcategory_summary and 'error' not in subcategory_summary:
+                status['subcategory_analysis']['subcategories_count'] = subcategory_summary['total_subcategories']
+        
+        # Обновляем общий прогресс (теперь 5 этапов вместо 4)
+        completed_steps = sum([
+            status['abc_analysis']['analyzed'],
+            status['sales_analysis']['ads_calculated'],
+            status['min_stock_analysis']['calculated'],
+            status['stock_analysis']['compared'],
+            status['subcategory_analysis']['analyzed']  # НОВЫЙ этап
+        ])
+        
+        status['overall'] = {
+            'completed_steps': completed_steps,
+            'total_steps': 5,  # Увеличиваем до 5
+            'progress_percentage': (completed_steps / 5) * 100,
+            'ready_for_export': completed_steps >= 2
         }
         
         return status
@@ -1293,7 +1428,51 @@ class ModularInventorySystem:
                     if not order_recommendations.empty:
                         order_recommendations = order_recommendations.sort_values('recommended_order', ascending=False)
                         order_recommendations.to_excel(writer, sheet_name='Рекомендации_заказа', index=False)
-            
+                if hasattr(self, 'subcategory_analyzer') and self.subcategory_analyzer.subcategory_results:
+                    # Сводная таблица подкатегорий
+                    subcategory_export_df = self.subcategory_analyzer.export_subcategory_analysis()
+                    if not subcategory_export_df.empty:
+                        subcategory_export_df.to_excel(writer, sheet_name='Подкатегории_ABC', index=False)
+                    
+                    # Парето-анализ подкатегорий
+                    pareto_data = self.subcategory_analyzer.get_subcategory_pareto_analysis()
+                    if pareto_data:
+                        # A подкатегории
+                        if pareto_data['pareto_80']:
+                            a_df = pd.DataFrame(pareto_data['pareto_80'])
+                            a_df.columns = ['Подкатегория', 'Продажи', 'Накопительный_%', 'Категория', 'Товаров']
+                            a_df.to_excel(writer, sheet_name='A_подкатегории', index=False)
+                        
+                        # B и C подкатегории
+                        if pareto_data['pareto_95']:
+                            b_df = pd.DataFrame(pareto_data['pareto_95'])
+                            b_df.columns = ['Подкатегория', 'Продажи', 'Накопительный_%', 'Категория', 'Товаров']
+                            b_df.to_excel(writer, sheet_name='B_подкатегории', index=False)
+                        
+                        if pareto_data['pareto_100']:
+                            c_df = pd.DataFrame(pareto_data['pareto_100'])
+                            c_df.columns = ['Подкатегория', 'Продажи', 'Накопительный_%', 'Категория', 'Товаров']
+                            c_df.to_excel(writer, sheet_name='C_подкатегории', index=False)
+                    
+                    # Анализ по категориям
+                    category_analysis = self.subcategory_analyzer.get_subcategory_analysis_by_category()
+                    if category_analysis:
+                        category_summary = []
+                        for category, data in category_analysis.items():
+                            category_summary.append({
+                                'Категория': category,
+                                'Подкатегорий': data['subcategories_count'],
+                                'Товаров': data['total_items'],
+                                'Продажи': data['total_sales'],
+                                'A_товары': data['abc_distribution_total']['A'],
+                                'B_товары': data['abc_distribution_total']['B'],
+                                'C_товары': data['abc_distribution_total']['C']
+                            })
+                        
+                        if category_summary:
+                            category_df = pd.DataFrame(category_summary)
+                            category_df.to_excel(writer, sheet_name='Категории_с_подкатегориями', index=False)
+
             output.seek(0)
             return output
             
@@ -1508,7 +1687,19 @@ class ModularInventorySystem:
                 'total_recommended_order': self.stock_comparison['recommended_order'].sum(),
                 'priority_distribution': self.stock_comparison['order_priority'].value_counts().to_dict()
             }
-        
+        if hasattr(self, 'subcategory_results') and self.subcategory_results:
+            subcategory_summary = self.get_subcategory_summary_report()
+            
+            if subcategory_summary and 'error' not in subcategory_summary:
+                report['subcategory_analysis'] = {
+                    'total_subcategories': subcategory_summary['total_subcategories'],
+                    'efficient_subcategories': subcategory_summary['efficient_subcategories'],
+                    'efficiency_percentage': subcategory_summary['efficiency_percentage'],
+                    'categories_with_subcategories': subcategory_summary['categories_analyzed'],
+                    'avg_items_per_subcategory': subcategory_summary['average_items_per_subcategory'],
+                    'subcategory_abc_distribution': subcategory_summary['abc_distribution']
+                }
+
         return report
     
     def clear_all_data(self):

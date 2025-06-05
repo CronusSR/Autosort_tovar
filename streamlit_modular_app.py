@@ -14,6 +14,7 @@ from integration_patch import add_multiple_files_interface_to_existing
 import io
 import time
 import warnings
+from subcategory_abc import create_subcategory_abc_interface
 warnings.filterwarnings('ignore')
 
 # Конфигурация страницы
@@ -64,11 +65,198 @@ def init_system():
         st.session_state.inventory_system = ModularInventorySystem()
     return st.session_state.inventory_system
 
+def subcategory_abc_analysis_page(system):
+    """Страница ABC анализа по подкатегориям"""
+    st.header("🔤📊 ABC анализ по подкатегориям")
+    
+    st.markdown("""
+    **Расширенный ABC анализ** с детализацией до подкатегорий позволяет:
+    - 🎯 Более точно управлять ассортиментом на уровне подгрупп
+    - 📈 Выявлять эффективные и неэффективные подкатегории
+    - 🔍 Анализировать концентрацию продаж внутри категорий
+    - 💡 Получать рекомендации по оптимизации структуры товаров
+    """)
+    
+    status = system.get_system_status()
+    
+    # Проверяем наличие ABC данных
+    if not status['abc_analysis']['analyzed']:
+        st.warning("⚠️ Сначала необходимо выполнить основной ABC анализ")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔤 Перейти к ABC анализу"):
+                st.info("Переключитесь на вкладку 'ABC анализ' для загрузки данных")
+        
+        with col2:
+            st.info("""
+            **Для анализа подкатегорий нужны:**
+            - Основной ABC анализ
+            - Данные с подкатегориями товаров
+            - Информация о продажах
+            """)
+        return
+    
+    # Проверяем статус анализа подкатегорий
+    subcategory_status = status.get('subcategory_analysis', {})
+    
+    if not subcategory_status.get('analyzed', False):
+        # Анализ еще не выполнен
+        st.info("📊 Основной ABC анализ выполнен. Готов к анализу подкатегорий.")
+        
+        # Показываем информацию о доступных данных
+        if hasattr(system, 'abc_data') and system.abc_data is not None:
+            abc_data = system.abc_data
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Товаров в ABC", len(abc_data))
+            with col2:
+                categories_count = abc_data['category'].nunique() if 'category' in abc_data.columns else 0
+                st.metric("Категорий", categories_count)
+            with col3:
+                subcategories_count = abc_data['subcategory'].nunique() if 'subcategory' in abc_data.columns else 0
+                st.metric("Подкатегорий", subcategories_count)
+            with col4:
+                ratio = subcategories_count / categories_count if categories_count > 0 else 0
+                st.metric("Подкат./Категория", f"{ratio:.1f}")
+            
+            # Предварительный анализ структуры
+            if 'subcategory' in abc_data.columns:
+                st.success("✅ Данные содержат информацию о подкатегориях")
+                
+                # Показываем примеры подкатегорий
+                with st.expander("👁️ Предварительный просмотр подкатегорий"):
+                    sample_subcategories = abc_data.groupby(['category', 'subcategory']).size().reset_index(name='товаров')
+                    sample_subcategories = sample_subcategories.head(10)
+                    st.dataframe(sample_subcategories, use_container_width=True)
+                
+            else:
+                st.warning("""
+                ⚠️ **Колонка 'subcategory' не найдена**
+                
+                Система попытается создать подкатегории из категорий.
+                Для лучших результатов убедитесь что в исходных данных есть:
+                - Колонка 'subcategory' с названиями подкатегорий
+                - Логичная иерархия: категория → подкатегория → товар
+                """)
+            
+            # Кнопка запуска анализа
+            if st.button("🚀 Выполнить анализ подкатегорий", use_container_width=True):
+                with st.spinner("Выполнение ABC анализа по подкатегориям..."):
+                    analysis_result = system.perform_subcategory_abc_analysis()
+                    
+                    if analysis_result['success']:
+                        st.success("✅ Анализ подкатегорий завершен успешно!")
+                        
+                        # Показываем краткие результаты
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Подкатегорий проанализировано", analysis_result['total_subcategories'])
+                        with col2:
+                            st.metric("Товаров обработано", analysis_result['total_items'])
+                        with col3:
+                            st.metric("Категорий охвачено", analysis_result['categories_analyzed'])
+                        
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {analysis_result['error']}")
+        else:
+            st.error("❌ Данные ABC анализа недоступны")
+    
+    else:
+        # Анализ выполнен - показываем результаты
+        st.success("✅ Анализ подкатегорий выполнен!")
+        
+        # Получаем сводку
+        subcategory_summary = system.get_subcategory_summary_report()
+        
+        if subcategory_summary and 'error' not in subcategory_summary:
+            # Общая статистика
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                st.metric("Подкатегорий", subcategory_summary['total_subcategories'])
+            with col2:
+                st.metric("Эффективных", f"{subcategory_summary['efficient_subcategories']}")
+            with col3:
+                st.metric("Эффективность", f"{subcategory_summary['efficiency_percentage']:.1f}%")
+            with col4:
+                st.metric("Товаров/Подкат.", f"{subcategory_summary['average_items_per_subcategory']:.1f}")
+            with col5:
+                st.metric("Категорий", subcategory_summary['categories_analyzed'])
+            
+            # ABC распределение
+            st.subheader("🔤 ABC распределение по подкатегориям")
+            abc_dist = subcategory_summary['abc_distribution']
+            
+            abc_col1, abc_col2, abc_col3 = st.columns(3)
+            with abc_col1:
+                st.metric("🔴 A товары", abc_dist['A'])
+            with abc_col2:
+                st.metric("🟡 B товары", abc_dist['B'])
+            with abc_col3:
+                st.metric("🟢 C товары", abc_dist['C'])
+            
+            # Визуализация ABC распределения
+            if hasattr(system, 'subcategory_analyzer'):
+                visualizations = system.subcategory_analyzer.create_subcategory_visualizations()
+                
+                if 'abc_distribution' in visualizations:
+                    st.plotly_chart(visualizations['abc_distribution'], use_container_width=True)
+        
+        # Основной интерфейс анализа подкатегорий
+        st.markdown("---")
+        
+        # Используем ABC данные из системы
+        if hasattr(system, 'abc_data') and system.abc_data is not None:
+            create_subcategory_abc_interface(system.abc_data)
+        
+        # Дополнительные действия
+        st.subheader("📤 Экспорт и управление")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📊 Экспорт подкатегорий Excel"):
+                excel_buffer = system.export_subcategory_results()
+                
+                if excel_buffer:
+                    st.download_button(
+                        label="💾 Скачать отчет подкатегорий",
+                        data=excel_buffer,
+                        file_name=f"subcategory_abc_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.error("❌ Ошибка создания Excel файла")
+        
+        with col2:
+            if st.button("🔄 Пересчитать анализ"):
+                # Очищаем результаты для пересчета
+                if hasattr(system, 'subcategory_results'):
+                    system.subcategory_results = None
+                if hasattr(system, 'subcategory_analyzer'):
+                    system.subcategory_analyzer.subcategory_results = None
+                st.success("✅ Данные очищены. Нажмите 'Выполнить анализ' для пересчета.")
+                st.rerun()
+        
+        with col3:
+            # Показываем краткие рекомендации
+            if hasattr(system, 'subcategory_results') and system.subcategory_results:
+                recommendations = system.subcategory_results.get('recommendations', [])
+                if recommendations:
+                    with st.popover("💡 Рекомендации"):
+                        for i, rec in enumerate(recommendations[:3], 1):
+                            st.write(f"**{i}.** {rec}")
+                        if len(recommendations) > 3:
+                            st.write(f"... и еще {len(recommendations) - 3} рекомендаций")
+
 def show_system_status(system):
     """Отображение статуса системы"""
     status = system.get_system_status()
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         abc_status = "✅" if status['abc_analysis']['analyzed'] else "❌"
@@ -97,11 +285,19 @@ def show_system_status(system):
             "Сравнение", 
             f"{stock_status} {status['stock_analysis']['items_count']} товаров"
         )
+
+    with col5:
+        subcat_status = "✅" if status['subcategory_analysis']['analyzed'] else "❌"
+        subcat_count = status['subcategory_analysis']['subcategories_count']
+        st.metric(
+            "Подкатегории", 
+            f"{subcat_status} {subcat_count} подкат."
+        )
     
     # Прогресс-бар
     progress = status['overall']['progress_percentage']
     st.progress(progress / 100)
-    st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/4 этапов)")
+    st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/5 этапов)")
 
 def abc_analysis_page_updated(system):
     """Обновленная страница ABC анализа с поддержкой товаров с нулевыми продажами"""
@@ -995,7 +1191,17 @@ def export_page(system):
         ads = summary['ads_analysis']
         st.write(f"**ADS анализ**: {ads['total_items']} товаров, общий ADS: {ads['total_ads']:.1f}")
         st.write(f"- Топ товар: {ads['top_seller']['item']} (ADS: {ads['top_seller']['ads_value']:.2f})")
-    
+
+    if 'subcategory_analysis' in summary:
+        subcat = summary['subcategory_analysis']
+        st.write(f"**ABC анализ подкатегорий**: {subcat['total_subcategories']} подкатегорий в {subcat['categories_with_subcategories']} категориях")
+        st.write(f"- Эффективных подкатегорий: {subcat['efficient_subcategories']} ({subcat['efficiency_percentage']:.1f}%)")
+        st.write(f"- Среднее товаров на подкатегорию: {subcat['avg_items_per_subcategory']:.1f}")
+        
+        # ABC распределение по подкатегориям
+        subcat_abc = subcat['subcategory_abc_distribution']
+        st.write(f"- ABC в подкатегориях: A={subcat_abc['A']}, B={subcat_abc['B']}, C={subcat_abc['C']}")
+
     if 'min_stock_analysis' in summary:
         min_stock = summary['min_stock_analysis']
         st.write(f"**Минимальные запасы**: {min_stock['total_items']} товаров")
@@ -1018,7 +1224,7 @@ def export_page(system):
     # Экспорт в Excel
     st.subheader("📥 Скачать Excel файл")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         if st.button("📊 Подготовить полный отчет", use_container_width=True):
@@ -1052,7 +1258,47 @@ def export_page(system):
         - Критичные товары  
         - Рекомендации по заказу
         """)
-
+        if status['subcategory_analysis']['analyzed']:
+            if st.button("🔤📊 Отчет подкатегорий", use_container_width=True):
+                with st.spinner("Создание отчета подкатегорий..."):
+                    try:
+                        excel_buffer = system.export_subcategory_results()
+                        
+                        if excel_buffer:
+                            st.download_button(
+                                label="💾 Скачать отчет подкатегорий",
+                                data=excel_buffer,
+                                file_name=f"subcategory_abc_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True
+                            )
+                            
+                            st.success("✅ Отчет подкатегорий готов!")
+                        else:
+                            st.error("❌ Ошибка создания отчета подкатегорий")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Ошибка: {str(e)}")
+        else:
+            st.info("Выполните анализ подкатегорий для экспорта")
+    with col3:
+        # Информация о содержимом файлов
+        st.info("""
+        **Содержимое полного Excel файла:**
+        - Общий статус системы
+        - ABC анализ (основной)
+        - ABC анализ подкатегорий ✨
+        - ADS расчеты
+        - Минимальные запасы
+        - Сравнение остатков
+        - Парето анализ подкатегорий ✨
+        - Товары с дефицитом
+        - Критичные товары  
+        - Рекомендации по заказу
+        
+        ✨ = Новые разделы
+        """)
+        
 def settings_page(system):
     """Страница настроек"""
     st.header("⚙️ Настройки системы")
@@ -1098,15 +1344,49 @@ def settings_page(system):
             )
             st.success("✅ Настройки сохранены!")
             st.rerun()
+    st.subheader("🔤📊 Настройки анализа подкатегорий")
     
-    # Управление данными
-    st.subheader("🗂️ Управление данными")
+    status = system.get_system_status()
+    subcategory_status = status.get('subcategory_analysis', {})
     
     col1, col2 = st.columns(2)
     
     with col1:
+        if subcategory_status.get('analyzed', False):
+            st.success("✅ Анализ подкатегорий выполнен")
+            
+            # Показываем краткую статистику
+            if hasattr(system, 'subcategory_results') and system.subcategory_results:
+                subcategory_summary = system.get_subcategory_summary_report()
+                
+                if subcategory_summary and 'error' not in subcategory_summary:
+                    st.metric("Подкатегорий", subcategory_summary['total_subcategories'])
+                    st.metric("Эффективность", f"{subcategory_summary['efficiency_percentage']:.1f}%")
+        else:
+            st.info("Анализ подкатегорий не выполнен")
+    
+    with col2:
+        if st.button("🗑️ Очистить анализ подкатегорий"):
+            if hasattr(system, 'subcategory_results'):
+                system.subcategory_results = None
+            if hasattr(system, 'subcategory_analyzer'):
+                system.subcategory_analyzer.subcategory_results = None
+                system.subcategory_analyzer.abc_data = None
+            st.success("✅ Анализ подкатегорий очищен!")
+            st.rerun()
+    # Управление данными
+    st.subheader("🗂️ Управление данными")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
         if st.button("🗑️ Очистить все данные", use_container_width=True):
             system.clear_all_data()
+            # Также очищаем данные подкатегорий
+            if hasattr(system, 'subcategory_results'):
+                system.subcategory_results = None
+            if hasattr(system, 'subcategory_analyzer'):
+                del system.subcategory_analyzer
             st.success("✅ Все данные очищены!")
             st.rerun()
     
@@ -1117,14 +1397,36 @@ def settings_page(system):
         else:
             st.info("Данные не загружены")
     
+    with col3:
+        # Диагностика системы
+        if st.button("🔍 Диагностика системы"):
+            st.subheader("🔧 Диагностическая информация")
+            
+            # Проверяем все компоненты
+            components_status = {
+                'ABC данные': hasattr(system, 'abc_data') and system.abc_data is not None,
+                'ABC результаты': hasattr(system, 'abc_results') and system.abc_results is not None,
+                'ADS данные': hasattr(system, 'calculated_ads') and system.calculated_ads is not None,
+                'MIN запасы': hasattr(system, 'calculated_min_stock') and system.calculated_min_stock is not None,
+                'Остатки': hasattr(system, 'stock_data') and system.stock_data is not None,
+                'Сравнение остатков': hasattr(system, 'stock_comparison') and system.stock_comparison is not None,
+                'Анализатор подкатегорий': hasattr(system, 'subcategory_analyzer'),
+                'Результаты подкатегорий': hasattr(system, 'subcategory_results') and system.subcategory_results is not None
+            }
+            
+            for component, status_val in components_status.items():
+                status_icon = "✅" if status_val else "❌"
+                st.write(f"{status_icon} {component}")
+    
     # Информация о системе
     st.subheader("ℹ️ Информация о системе")
     
     st.markdown("""
-    **Модульная система анализа товарных запасов**
+    **Модульная система анализа товарных запасов v2.0**
     
     **Возможности:**
     - 🔤 ABC анализ по принципу Парето
+    - 🔤📊 **ABC анализ по подкатегориям** ✨
     - 📊 Расчет ADS из исторических данных
     - 📋 Расчет минимальных запасов с учетом IP
     - ⚖️ Сравнение с текущими остатками
@@ -1140,6 +1442,12 @@ def settings_page(system):
     - MIN = ADS × (дни запаса + транзитное время)
     - Дефицит = MIN - текущий остаток
     - Рекомендуемый заказ = Дефицит × коэффициент безопасности
+    
+    **Новое в v2.0:**
+    - ✨ Анализ ABC по подкатегориям
+    - ✨ Парето-анализ подкатегорий  
+    - ✨ Рекомендации по оптимизации структуры
+    - ✨ Анализ эффективности подкатегорий
     """)
 
 def main():
@@ -1168,6 +1476,7 @@ def main():
                 "📊 ADS расчет", 
                 "📋 MIN запасы",
                 "⚖️ Сравнение остатков",
+                "🔤📊 ABC подкатегории",
                 "📤 Экспорт результатов",
                 "⚙️ Настройки"
             ]
@@ -1182,6 +1491,8 @@ def main():
         
         if not status['abc_analysis']['analyzed']:
             st.button("🔤 Начать с ABC", key="quick_abc")
+        elif not status['subcategory_analysis']['analyzed']:
+            st.button("📊 Анализ подкатегорий", key="quick_subcategory")
         elif not status['sales_analysis']['ads_calculated']:
             st.button("📊 Рассчитать ADS", key="quick_ads")
         elif not status['min_stock_analysis']['calculated']:
@@ -1200,6 +1511,8 @@ def main():
         min_stock_calculation_page(system)
     elif page == "⚖️ Сравнение остатков":
         stock_comparison_page(system)
+    elif page == "🔤📊 ABC подкатегории":  
+        subcategory_abc_analysis_page(system)
     elif page == "📤 Экспорт результатов":
         export_page(system)
     elif page == "⚙️ Настройки":
@@ -1214,6 +1527,7 @@ def main():
             st.info("""
             **Последовательность работы:**
             1. 🔤 ABC анализ (опционально)
+            2. 🔤📊 ABC анализ по подкатегориям (детализация)
             2. 📊 Расчет ADS из файла продаж
             3. 📋 Расчет минимальных запасов
             4. ⚖️ Загрузка остатков и сравнение
@@ -1228,7 +1542,7 @@ def main():
             st.info(f"📊 Прогресс: {progress:.0f}%")
     
     with col3:
-        st.caption(f"Система v1.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+        st.caption(f"Система v2.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
 
 if __name__ == "__main__":
     main()

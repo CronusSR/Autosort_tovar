@@ -1643,6 +1643,16 @@ class ModularInventorySystem:
             min_stock_df = self.calculated_min_stock.copy()
             current_stock_df = self.stock_data[['номенклатура', 'total_current_stock']].copy()
             
+            # 🔧 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Добавляем цены из ADS если их нет в MIN запасах
+            if 'last_purchase_price' not in min_stock_df.columns:
+                if (hasattr(self, 'calculated_ads') and 
+                    self.calculated_ads is not None and 
+                    'last_purchase_price' in self.calculated_ads.columns):
+                    print("🔧 Добавляем цены из ADS данных...")
+                    price_df = self.calculated_ads[['номенклатура', 'last_purchase_price']].copy()
+                    min_stock_df = pd.merge(min_stock_df, price_df, on='номенклатура', how='left')
+                    min_stock_df['last_purchase_price'] = min_stock_df['last_purchase_price'].fillna(0)
+            
             # Merge данных
             comparison = pd.merge(
                 min_stock_df,
@@ -1666,26 +1676,25 @@ class ModularInventorySystem:
                 # Заполняем пропуски в ценах
                 comparison['last_purchase_price'] = comparison['last_purchase_price'].fillna(0)
                 
-                # Денежные расчеты
+                # Денежные расчеты дефицита
                 comparison['stock_deficit_money'] = comparison['stock_deficit'] * comparison['last_purchase_price']
                 comparison['min_stock_money'] = comparison['min_stock_total'] * comparison['last_purchase_price']
                 comparison['current_stock_money'] = comparison['total_current_stock'] * comparison['last_purchase_price']
             else:
-                # Создаем пустые колонки если цен нет
+                # Если цен нет, ставим 0
                 comparison['last_purchase_price'] = 0
                 comparison['stock_deficit_money'] = 0
-                comparison['min_stock_money'] = 0  
+                comparison['min_stock_money'] = 0
                 comparison['current_stock_money'] = 0
-                print("⚠️ Цены отсутствуют - создаются нулевые колонки")
-
-            # Текущий запас в днях
+            
+            # Рассчитываем дни остатка
             comparison['current_stock_days'] = np.where(
                 comparison['ads'] > 0,
                 comparison['total_current_stock'] / comparison['ads'],
                 0
             )
             
-            # Статус товара
+            # Определяем статус товара
             def determine_status(row):
                 if row['stock_deficit'] > 0:
                     if row['current_stock_days'] < row['ip_target_days']:
@@ -1697,81 +1706,67 @@ class ModularInventorySystem:
             
             comparison['status'] = comparison.apply(determine_status, axis=1)
             
-            # Рекомендуемый заказ с учетом коэффициента безопасности
-            safety_factor = self.default_params['safety_factor']
+            # Рекомендуемый заказ
+            safety_factor = getattr(self, 'default_params', {}).get('safety_factor', 1.0)
             comparison['recommended_order'] = comparison['stock_deficit'] * safety_factor
             comparison['recommended_order'] = comparison['recommended_order'].apply(lambda x: max(0, x))
             
-            # Денежное выражение заказа (если есть цены)
-            if has_price_data:
-                comparison['recommended_order_money'] = comparison['recommended_order'] * comparison['last_purchase_price']
-            else:
-                comparison['recommended_order_money'] = 0
-
+            # Денежное выражение рекомендуемого заказа
+            comparison['recommended_order_money'] = comparison['recommended_order'] * comparison['last_purchase_price']
+            
             # Приоритет заказа
             comparison['order_priority'] = comparison.apply(
                 lambda row: 'СРОЧНО' if row['status'] == 'КРИТИЧНО'
-                           else 'ВЫСОКИЙ' if row['status'] == 'НЕДОСТАТОК' and row['ads'] > comparison['ads'].quantile(0.7)
+                           else 'ВЫСОКИЙ' if row['status'] == 'НЕДОСТАТОК' and row['ads'] > comparison['ads'].quantile(0.8)
                            else 'СРЕДНИЙ' if row['status'] == 'НЕДОСТАТОК'
-                           else 'НЕ ТРЕБУЕТСЯ', axis=1
+                           else 'НИЗКИЙ', axis=1
             )
             
-            # Сортировка по денежному дефициту (если есть цены) или по количественному
-            if has_price_data and comparison['stock_deficit_money'].sum() > 0:
-                priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
-                comparison['status_priority'] = comparison['status'].map(priority_order)
-                comparison = comparison.sort_values(['status_priority', 'stock_deficit_money'], ascending=[False, False])
-                comparison = comparison.drop('status_priority', axis=1)
-                print("📊 Сортировка по денежному дефициту")
-            else:
-                # Обычная сортировка по количественному дефициту
-                priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
-                comparison['status_priority'] = comparison['status'].map(priority_order)
-                comparison = comparison.sort_values(['status_priority', 'stock_deficit'], ascending=[False, False])
-                comparison = comparison.drop('status_priority', axis=1)
-                print("📊 Сортировка по количественному дефициту")
-            
+            # Сохраняем результат
             self.stock_comparison = comparison
             
-            # Статистика результатов
+            # Возвращаем статистику
             total_items = len(comparison)
             deficit_items = len(comparison[comparison['stock_deficit'] > 0])
             critical_items = len(comparison[comparison['status'] == 'КРИТИЧНО'])
-            sufficient_items = len(comparison[comparison['status'] == 'ДОСТАТОЧНО'])
-            
-            total_deficit_value = comparison['stock_deficit'].sum()
-            total_recommended_order = comparison['recommended_order'].sum()
-            total_deficit_money = comparison['stock_deficit_money'].sum() if has_price_data else 0
             
             print(f"📊 Результаты сравнения:")
             print(f"   Всего товаров: {total_items}")
             print(f"   С дефицитом: {deficit_items}")
             print(f"   Критичных: {critical_items}")
-            print(f"   Дефицит (шт): {total_deficit_value:,.0f}")
-            if has_price_data:
-                print(f"   Дефицит (₽): {total_deficit_money:,.2f}")
             
-            return {
+            result = {
                 'success': True,
                 'total_items': total_items,
                 'deficit_items': deficit_items,
                 'critical_items': critical_items,
-                'sufficient_items': sufficient_items,
-                'deficit_percentage': (deficit_items / total_items) * 100,
-                'total_deficit_value': total_deficit_value,
-                'total_recommended_order': total_recommended_order,
-                'total_deficit_money': total_deficit_money,
-                'has_price_data': has_price_data,
-                'top_deficit_items': comparison[comparison['stock_deficit'] > 0].head(10)[
-                    ['номенклатура', 'stock_deficit', 'current_stock_days', 'status', 'order_priority']
-                ].to_dict('records')
+                'total_deficit': comparison['stock_deficit'].sum(),
+                'has_price_data': has_price_data
             }
+            
+            if has_price_data:
+                total_deficit_money = comparison['stock_deficit_money'].sum()
+                total_recommended_money = comparison['recommended_order_money'].sum()
+                items_with_price = len(comparison[comparison['last_purchase_price'] > 0])
+                
+                result.update({
+                    'total_deficit_money': total_deficit_money,
+                    'total_recommended_order_money': total_recommended_money,
+                    'items_with_price': items_with_price,
+                    'price_coverage_percentage': (items_with_price / total_items) * 100 if total_items > 0 else 0
+                })
+                
+                print(f"   Дефицит в деньгах: {total_deficit_money:,.2f} ₽")
+                print(f"   Товаров с ценами: {items_with_price}")
+            
+            return result
             
         except Exception as e:
             print(f"❌ Ошибка сравнения: {str(e)}")
             import traceback
             traceback.print_exc()
-            return {'success': False, 'error': f"Ошибка сравнения остатков: {str(e)}"}  
+            return {'success': False, 'error': f"Ошибка сравнения остатков: {str(e)}"}
+        
     def get_system_status(self) -> Dict:
         """
         Получение статуса всей системы

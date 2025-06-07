@@ -3,25 +3,7 @@
 """
 Модульное Streamlit приложение для системы анализа товарных запасов
 """
-try:
-    from price_integration_fix import apply_price_fixes_to_system, quick_price_check
-    from streamlit_deficit_money_update import (
-        stock_comparison_page_with_money, 
-        add_price_info_to_ads_page,
-        update_export_page_with_money,
-        show_money_integration_status,
-        integration_instructions
-    )
-    PRICE_FEATURES_AVAILABLE = True
-except ImportError:
-    PRICE_FEATURES_AVAILABLE = False
-    st.sidebar.warning("⚠️ Модули цен не найдены")
 
-try:
-    from complete_price_integration import complete_price_integration_setup, show_price_integration_status_in_streamlit
-    PRICE_INTEGRATION_AVAILABLE = True
-except ImportError:
-    PRICE_INTEGRATION_AVAILABLE = False
 
 import json
 import numpy as np
@@ -35,6 +17,27 @@ import io
 import time
 import warnings
 from subcategory_abc import create_subcategory_abc_interface
+
+try:
+    from price_integration_fix import apply_price_fixes_to_system, quick_price_check
+    from streamlit_deficit_money_update import (
+        stock_comparison_page_with_money, 
+        add_price_info_to_ads_page,
+        update_export_page_with_money,
+        show_money_integration_status,
+        integration_instructions
+    )
+    PRICE_FEATURES_AVAILABLE = True
+except ImportError:
+    PRICE_FEATURES_AVAILABLE = False
+    print("⚠️ Модули цен не найдены")
+
+try:
+    from complete_price_integration import complete_price_integration_setup, show_price_integration_status_in_streamlit
+    PRICE_INTEGRATION_AVAILABLE = True
+except ImportError:
+    PRICE_INTEGRATION_AVAILABLE = False
+    print("⚠️ Модуль полной интеграции цен не найден")
 warnings.filterwarnings('ignore')
 
 # Конфигурация страницы
@@ -699,7 +702,22 @@ def ads_calculation_page_updated(system):
         
         # Топ товары по ADS
         st.subheader("🏆 Топ товары по ADS")
-        top_ads = ads_data.nlargest(10, 'ads')
+        # Фильтруем только товары с положительным ADS из загруженного файла
+        top_ads = ads_data[ads_data['ads'] > 0].nlargest(10, 'ads')
+
+        # Дополнительная проверка на валидность данных
+        if len(top_ads) == 0:
+            st.warning("⚠️ Нет товаров с положительным ADS")
+        else:
+            fig_ads = px.bar(
+                top_ads,
+                x='ads',
+                y='номенклатура',
+                orientation='h',
+                title=f'Топ-{len(top_ads)} товаров по ADS (из загруженного файла)',
+                labels={'ads': 'Среднедневные продажи', 'номенклатура': 'Товар'}
+            )
+            st.plotly_chart(fig_ads, use_container_width=True)
 
         fig_ads = px.bar(
             top_ads,
@@ -790,19 +808,19 @@ def ads_calculation_page_updated(system):
                     with col1:
                         st.metric("Товаров", load_result['total_items'])
                     with col2:
-                        st.metric("Номенклатура из", load_result['nomenclature_column'])
+                        st.metric("Номенклатура из", load_result.get('nomenclature_column', 'B'))
                     with col3:
-                        st.metric("Общий ADS", f"{load_result['total_ads']:.2f}")
+                        st.metric("Общий ADS", f"{load_result.get('total_ads', 0):.2f}")
                     with col4:
-                        st.metric("JSON создан", "✅" if load_result['json_data_created'] else "❌")
+                        st.metric("JSON создан", "✅" if load_result.get('json_data_created', False) else "❌")
                     
                     # Информация о обработке
                     st.info(f"""
                     **Результаты обработки:**
-                    - Формула: {load_result['formula']}
-                    - Диапазон: {load_result['range_used']}
-                    - Последняя строка исключена: {'✅' if load_result['last_row_excluded'] else '❌'}
-                    - С положительным ADS: {load_result['items_with_positive_ads']} товаров
+                    - Формула: {load_result.get('formula', 'ADS = среднее/30')}
+                    - Диапазон: {load_result.get('range_used', 'M4:AB')}
+                    - Последняя строка исключена: {'✅' if load_result.get('last_row_excluded', False) else '❌'}
+                    - С положительным ADS: {load_result.get('items_with_positive_ads', 0)} товаров
                     """)
                     
                     st.rerun()
@@ -1113,7 +1131,34 @@ def stock_comparison_page(system):
     with col4:
         total_deficit = comparison_data['stock_deficit'].sum()
         st.metric("Общий дефицит", f"{total_deficit:,.0f}")
-    
+    # Проверяем наличие ценовых данных
+    has_price_data = 'last_purchase_price' in comparison_data.columns and 'stock_deficit_money' in comparison_data.columns
+
+    if has_price_data:
+        st.subheader("💰 Денежные показатели")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_deficit_money = comparison_data['stock_deficit_money'].sum()
+            st.metric("Общий дефицит (₽)", f"{total_deficit_money:,.2f}")
+        
+        with col2:
+            total_recommended_order_money = comparison_data['recommended_order_money'].sum()
+            st.metric("К заказу (₽)", f"{total_recommended_order_money:,.2f}")
+        
+        with col3:
+            items_with_price = len(comparison_data[comparison_data['last_purchase_price'] > 0])
+            price_coverage = (items_with_price / total_items) * 100
+            st.metric("Покрытие ценами", f"{price_coverage:.1f}%")
+        
+        with col4:
+            if items_with_price > 0:
+                avg_price = comparison_data[comparison_data['last_purchase_price'] > 0]['last_purchase_price'].mean()
+                st.metric("Средняя цена", f"{avg_price:,.2f} ₽")
+            else:
+                st.metric("Средняя цена", "Нет данных")
+
     # Визуализации
     visualizations = system.create_visualizations()
     
@@ -1182,6 +1227,15 @@ def stock_comparison_page(system):
             'recommended_order': 'Рекомендуемый заказ'
         }
     )
+    # Добавляем денежные колонки если есть данные
+    if has_price_data:
+        display_columns.extend(['last_purchase_price', 'stock_deficit_money', 'recommended_order_money'])
+        column_config.update({
+            'last_purchase_price': 'Цена (₽)',
+            'stock_deficit_money': 'Дефицит (₽)', 
+            'recommended_order_money': 'К заказу (₽)'
+        })
+    
     
     if len(filtered_data) != len(comparison_data):
         st.info(f"Показано {len(filtered_data)} из {len(comparison_data)} товаров")
@@ -1477,6 +1531,7 @@ def main():
     # Инициализация системы
     system = init_system()
 
+    # НОВОЕ: Применяем интеграцию цен (если доступна)
     if PRICE_INTEGRATION_AVAILABLE:
         complete_price_integration_setup(system)
         
@@ -1489,12 +1544,11 @@ def main():
         # Добавляем статус цен в sidebar
         show_money_integration_status(system)
         integration_instructions()
+    
     # Заголовок
     st.title("📦 Модульная система анализа товарных запасов")
     st.markdown("*Пошаговый анализ с выбором типа операции*")
     
-    
-
     # Боковая панель с навигацией
     with st.sidebar:
         st.header("🧭 Навигация")
@@ -1506,25 +1560,9 @@ def main():
         if PRICE_FEATURES_AVAILABLE and st.button("🔍 Проверить цены"):
             quick_price_check(system)
         
-        if page == "⚖️ Сравнение остатков":
-            if PRICE_FEATURES_AVAILABLE:
-                stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
-            else:
-                stock_comparison_page(system)  # Старая функция
-        
-        elif page == "📊 ADS расчет":
-            ads_calculation_page_updated(system)
-            if PRICE_FEATURES_AVAILABLE:
-                add_price_info_to_ads_page(system)  # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ЦЕНАХ
-        
-        elif page == "📤 Экспорт результатов":
-            export_page(system)
-            if PRICE_FEATURES_AVAILABLE:
-                update_export_page_with_money(system)  # ДОБАВЛЯЕМ ДЕНЕЖНЫЙ ЭКСПОРТ
-
         st.markdown("---")
         
-        # Меню навигации
+        # ВАЖНО: Определяем переменную page ЗДЕСЬ, в sidebar
         page = st.selectbox(
             "Выберите раздел:",
             [
@@ -1559,18 +1597,26 @@ def main():
             st.button("📤 Экспорт", key="quick_export")
     
     # Основной контент в зависимости от выбранной страницы
+    # ТЕПЕРЬ переменная page уже определена выше
     if page == "🔤 ABC анализ":
         abc_analysis_page_updated(system)
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
+        if PRICE_FEATURES_AVAILABLE:
+            add_price_info_to_ads_page(system)  # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ЦЕНАХ
     elif page == "📋 MIN запасы":
         min_stock_calculation_page(system)
     elif page == "⚖️ Сравнение остатков":
-        stock_comparison_page(system)
+        if PRICE_FEATURES_AVAILABLE:
+            stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
+        else:
+            stock_comparison_page(system)  # Старая функция
     elif page == "🔤📊 ABC подкатегории":  
         subcategory_abc_analysis_page(system)
     elif page == "📤 Экспорт результатов":
         export_page(system)
+        if PRICE_FEATURES_AVAILABLE:
+            update_export_page_with_money(system)  # ДОБАВЛЯЕМ ДЕНЕЖНЫЙ ЭКСПОРТ
     elif page == "⚙️ Настройки":
         settings_page(system)
     
@@ -1584,13 +1630,14 @@ def main():
             **Последовательность работы:**
             1. 🔤 ABC анализ (опционально)
             2. 🔤📊 ABC анализ по подкатегориям (детализация)
-            2. 📊 Расчет ADS из файла продаж
-            3. 📋 Расчет минимальных запасов
-            4. ⚖️ Загрузка остатков и сравнение
-            5. 📤 Экспорт результатов
+            3. 📊 Расчет ADS из файла продаж
+            4. 📋 Расчет минимальных запасов
+            5. ⚖️ Загрузка остатков и сравнение
+            6. 📤 Экспорт результатов
             """)
     
     with col2:
+        status = system.get_system_status()  # Получаем статус заново
         progress = status['overall']['progress_percentage']
         if progress == 100:
             st.success("✅ Все этапы завершены!")

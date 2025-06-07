@@ -251,13 +251,27 @@ class ModularInventorySystem:
                 # 2. Делим среднее значение на 30
                 ads_value = average_value / 30
                 
+                try:
+                    if price_data is not None:
+                        item_price = pd.to_numeric(price_data.loc[idx], errors='coerce')
+                        if pd.isna(item_price) or item_price < 0:
+                            item_price = 0.0
+                        else:
+                            if 'prices_found' not in locals():
+                                prices_found = 0
+                            prices_found += 1
+                    else:
+                        item_price = 0.0
+                except:
+                    item_price = 0.0
+
                 sales_data_list.append({
                     'номенклатура': item_name,
                     'ads': ads_value,
                     'average_value': average_value,
-                    'total_sales': row_sales_numeric.sum(),  # Для совместимости
+                    'total_sales': row_sales_numeric.sum(),
                     'monthly_data': row_sales_numeric.tolist(),
-                    'last_purchase_price': float(item_price)  # НОВОЕ: ДОБАВЛЯЕМ ЦЕНУ
+                    'last_purchase_price': float(item_price)  # ДОБАВИТЬ ЭТУ СТРОКУ
                 })
             
             # Создаем DataFrame
@@ -265,8 +279,10 @@ class ModularInventorySystem:
             
             # Сохраняем результаты в системе
             self.sales_data = ads_df
-            self.calculated_ads = ads_df[['номенклатура', 'ads', 'average_value', 'total_sales', 'last_purchase_price']].copy()
-            
+            columns_to_keep = ['номенклатура', 'ads', 'average_value', 'total_sales']
+            if 'last_purchase_price' in ads_df.columns:
+                columns_to_keep.append('last_purchase_price')
+            self.calculated_ads = ads_df[columns_to_keep].copy()
             # НОВОЕ: Статистика по ценам
             print(f"\n💰 СТАТИСТИКА ЦЕН:")
             print(f"   Цен обработано: {prices_processed}")
@@ -1403,6 +1419,15 @@ class ModularInventorySystem:
             comparison['stock_deficit'] = comparison['min_stock_total'] - comparison['total_current_stock']
             comparison['stock_deficit'] = comparison['stock_deficit'].apply(lambda x: max(0, x))
             
+            if 'last_purchase_price' in comparison.columns:
+                comparison['stock_deficit_money'] = comparison['stock_deficit'] * comparison['last_purchase_price']
+                comparison['min_stock_money'] = comparison['min_stock_total'] * comparison['last_purchase_price']
+                comparison['current_stock_money'] = comparison['total_current_stock'] * comparison['last_purchase_price']
+            else:
+                comparison['stock_deficit_money'] = 0
+                comparison['min_stock_money'] = 0  
+                comparison['current_stock_money'] = 0
+
             # Текущий запас в днях
             comparison['current_stock_days'] = np.where(
                 comparison['ads'] > 0,
@@ -1427,6 +1452,11 @@ class ModularInventorySystem:
             comparison['recommended_order'] = comparison['stock_deficit'] * safety_factor
             comparison['recommended_order'] = comparison['recommended_order'].apply(lambda x: max(0, x))
             
+            if 'last_purchase_price' in comparison.columns:
+                comparison['recommended_order_money'] = comparison['recommended_order'] * comparison['last_purchase_price']
+            else:
+                comparison['recommended_order_money'] = 0
+
             # Приоритет заказа
             comparison['order_priority'] = comparison.apply(
                 lambda row: 'СРОЧНО' if row['status'] == 'КРИТИЧНО'
@@ -1435,11 +1465,19 @@ class ModularInventorySystem:
                            else 'НЕ ТРЕБУЕТСЯ', axis=1
             )
             
-            # Сортируем по критичности
-            priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
-            comparison['status_priority'] = comparison['status'].map(priority_order)
-            comparison = comparison.sort_values(['status_priority', 'stock_deficit'], ascending=[False, False])
-            comparison = comparison.drop('status_priority', axis=1)
+            
+            # Сортировка по денежному дефициту если есть цены
+            if 'stock_deficit_money' in comparison.columns and comparison['stock_deficit_money'].sum() > 0:
+                priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
+                comparison['status_priority'] = comparison['status'].map(priority_order)
+                comparison = comparison.sort_values(['status_priority', 'stock_deficit_money'], ascending=[False, False])
+                comparison = comparison.drop('status_priority', axis=1)
+            else:
+                # Обычная сортировка по количественному дефициту
+                priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
+                comparison['status_priority'] = comparison['status'].map(priority_order)
+                comparison = comparison.sort_values(['status_priority', 'stock_deficit'], ascending=[False, False])
+                comparison = comparison.drop('status_priority', axis=1)
             
             self.stock_comparison = comparison
             

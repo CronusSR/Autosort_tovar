@@ -17,7 +17,7 @@ import io
 import time
 import warnings
 from subcategory_abc import create_subcategory_abc_interface
-
+from max_stock_calculator import add_max_stock_methods_to_system
 try:
     from price_integration_fix import apply_price_fixes_to_system, quick_price_check
     from streamlit_deficit_money_update import (
@@ -88,7 +88,87 @@ def init_system():
         st.session_state.inventory_system = ModularInventorySystem()
     return st.session_state.inventory_system
 
-
+def max_stock_page(system):
+    """Новая страница для работы с максимальными остатками"""
+    st.header("📦 Максимальные остатки")
+    
+    # Интеграция методов (если еще не интегрированы)
+    if not hasattr(system, 'max_stock_calculator'):
+        add_max_stock_methods_to_system(system)
+        st.success("✅ Модуль максимальных остатков подключен")
+    
+    # Настройки параметров
+    st.subheader("⚙️ Настройки параметров")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        point_type = st.selectbox(
+            "Тип точки:",
+            options=['магазины', 'склады', 'хабы'],
+            help="Выберите тип точки для настройки"
+        )
+    
+    with col2:
+        category = st.selectbox(
+            "ABC категория:",
+            options=['A', 'B', 'C'],
+            help="Выберите ABC категорию"
+        )
+    
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        min_days = st.number_input(
+            "Дни MIN запаса:",
+            min_value=1,
+            max_value=180,
+            value=20 if point_type == 'магазины' and category == 'A' else 10,
+            help="Количество дней для минимального запаса"
+        )
+    
+    with col4:
+        max_days = st.number_input(
+            "Дни MAX запаса:",
+            min_value=min_days,
+            max_value=365,
+            value=50 if point_type == 'магазины' and category == 'A' else 25,
+            help="Количество дней для максимального запаса"
+        )
+    
+    if st.button("💾 Сохранить настройки"):
+        system.set_max_stock_settings(point_type, category, min_days, max_days)
+        st.success(f"✅ Настройки сохранены: {point_type}/{category} = MIN:{min_days}д, MAX:{max_days}д")
+    
+    # Показ текущих настроек
+    if st.button("📋 Показать все настройки"):
+        system.show_max_stock_settings()
+    
+    st.divider()
+    
+    # Расчет максимальных остатков
+    st.subheader("📊 Расчет максимальных остатков")
+    
+    calc_point_type = st.selectbox(
+        "Рассчитать для типа точек:",
+        options=['магазины', 'склады', 'хабы'],
+        key="calc_point_type"
+    )
+    
+    if st.button("🔄 Рассчитать MAX остатки"):
+        if not hasattr(system, 'calculated_ads') or system.calculated_ads is None:
+            st.error("❌ Сначала рассчитайте ADS")
+        else:
+            with st.spinner("Расчет максимальных остатков..."):
+                result = system.calculate_max_stock(calc_point_type)
+                
+                if result['success']:
+                    st.success("✅ Максимальные остатки рассчитаны!")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("MIN запасы", f"{result['total_min_stock']:,.0f} шт")
 
 def subcategory_abc_analysis_page(system):
     """Страница ABC анализа по подкатегориям"""
@@ -1646,6 +1726,79 @@ def main():
     
     with col3:
         st.caption(f"Система v2.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+
+def max_stock_page(system):
+    """Страница максимальных остатков"""
+    st.header("📦 Максимальные остатки")
+    
+    # Проверка интеграции
+    if not hasattr(system, '_max_stock_integrated'):
+        add_max_stock_methods_to_system(system)
+        system._max_stock_integrated = True
+        st.success("✅ Модуль максимальных остатков подключен")
+    
+    # Настройки
+    st.subheader("⚙️ Настройки параметров")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        point_type = st.selectbox("Тип точки:", ['магазины', 'склады', 'хабы'])
+    with col2:
+        category = st.selectbox("ABC категория:", ['A', 'B', 'C'])
+    
+    col3, col4 = st.columns(2)
+    with col3:
+        min_days = st.number_input("Дни MIN запаса:", min_value=1, value=20)
+    with col4:
+        max_days = st.number_input("Дни MAX запаса:", min_value=min_days, value=50)
+    
+    if st.button("💾 Сохранить настройки"):
+        system.set_max_stock_settings(point_type, category, min_days, max_days)
+        st.success(f"✅ Настройки сохранены: {point_type}/{category}")
+    
+    # Расчет
+    st.subheader("📊 Расчет максимальных остатков")
+    
+    calc_point_type = st.selectbox("Рассчитать для:", ['магазины', 'склады', 'хабы'], key="calc")
+    
+    if st.button("🔄 Рассчитать MAX остатки"):
+        if not hasattr(system, 'calculated_ads') or system.calculated_ads is None:
+            st.error("❌ Сначала рассчитайте ADS")
+        else:
+            result = system.calculate_max_stock(calc_point_type)
+            if result['success']:
+                st.success("✅ Максимальные остатки рассчитаны!")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("MIN запасы", f"{result['total_min_stock']:,.0f} шт")
+                with col2:
+                    st.metric("MAX запасы", f"{result['total_max_stock']:,.0f} шт")
+                with col3:
+                    st.metric("Диапазон", f"{result['total_stock_range']:,.0f} шт")
+            else:
+                st.error(f"❌ {result['error']}")
+    
+    # Сравнение
+    st.subheader("⚖️ Сравнение с текущими остатками")
+    
+    if st.button("📊 Сравнить с MIN/MAX"):
+        if not hasattr(system, 'calculated_max_stock'):
+            st.error("❌ Сначала рассчитайте максимальные остатки")
+        elif not hasattr(system, 'stock_data'):
+            st.error("❌ Сначала загрузите текущие остатки")
+        else:
+            result = system.compare_with_max_stock()
+            if result['success']:
+                st.success("✅ Сравнение выполнено!")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Недостаток", f"{result['shortage_items']} товаров")
+                with col2:
+                    st.metric("Избыток", f"{result['excess_items']} товаров")
+                with col3:
+                    st.metric("Норма", f"{result['normal_items']} товаров")
+            else:
+                st.error(f"❌ {result['error']}")
 
 if __name__ == "__main__":
     main()

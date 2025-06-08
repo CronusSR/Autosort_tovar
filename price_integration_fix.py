@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 
 def compare_stock_vs_min_with_prices(system) -> dict:
     """
-    ИСПРАВЛЕННЫЙ метод сравнения остатков с полной поддержкой цен
+    ИСПРАВЛЕННАЯ функция - решает проблему потери цен
     """
     if system.calculated_min_stock is None:
         return {'success': False, 'error': 'Минимальные запасы не рассчитаны'}
@@ -31,44 +31,72 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         min_stock_df = system.calculated_min_stock.copy()
         current_stock_df = system.stock_data[['номенклатура', 'total_current_stock']].copy()
         
-        # КРИТИЧНО: Получаем цены из ADS данных (там они загружаются из колонки 12)
-        price_df = None
-        if (hasattr(system, 'calculated_ads') and 
-            system.calculated_ads is not None and 
-            'last_purchase_price' in system.calculated_ads.columns):
-            
-            price_df = system.calculated_ads[['номенклатура', 'last_purchase_price']].copy()
-            print(f"✅ Найдены цены в ADS данных: {len(price_df)} товаров")
-            
-            # Статистика цен
-            items_with_price = len(price_df[price_df['last_purchase_price'] > 0])
-            avg_price = price_df[price_df['last_purchase_price'] > 0]['last_purchase_price'].mean()
-            
-            print(f"💰 Статистика цен из ADS:")
-            print(f"   - С ценой > 0: {items_with_price}")
-            print(f"   - Средняя цена: {avg_price:.2f}")
+        print(f"📊 MIN запасы: {len(min_stock_df)} товаров")
+        print(f"📊 Остатки: {len(current_stock_df)} товаров")
         
-        # Объединяем данные
+        # ОТЛАДКА: Проверяем наличие цен в минимальных запасах
+        price_in_min_stock = 'last_purchase_price' in min_stock_df.columns
+        print(f"🔍 Цены в MIN запасах: {'✅' if price_in_min_stock else '❌'}")
+        
+        if price_in_min_stock:
+            items_with_price_in_min = len(min_stock_df[min_stock_df['last_purchase_price'] > 0])
+            print(f"💰 Товаров с ценами в MIN: {items_with_price_in_min}")
+        
+        # КРИТИЧНО: Если цен нет в MIN запасах, добавляем из ADS
+        if not price_in_min_stock:
+            print("🔧 Цены отсутствуют в MIN запасах, добавляем из ADS...")
+            
+            if (hasattr(system, 'calculated_ads') and 
+                system.calculated_ads is not None and 
+                'last_purchase_price' in system.calculated_ads.columns):
+                
+                price_df = system.calculated_ads[['номенклатура', 'last_purchase_price']].copy()
+                print(f"✅ Найдены цены в ADS: {len(price_df)} товаров")
+                
+                # Статистика цен из ADS
+                items_with_price_ads = len(price_df[price_df['last_purchase_price'] > 0])
+                avg_price = price_df[price_df['last_purchase_price'] > 0]['last_purchase_price'].mean()
+                
+                print(f"💰 Статистика цен из ADS:")
+                print(f"   - С ценой > 0: {items_with_price_ads}")
+                print(f"   - Средняя цена: {avg_price:.2f}")
+                
+                # ДОБАВЛЯЕМ ЦЕНЫ В MIN ЗАПАСЫ
+                min_stock_df = pd.merge(min_stock_df, price_df, on='номенклатура', how='left')
+                min_stock_df['last_purchase_price'] = pd.to_numeric(
+                    min_stock_df['last_purchase_price'], errors='coerce'
+                ).fillna(0)
+                
+                print(f"✅ Цены добавлены в MIN запасы")
+                items_after_merge = len(min_stock_df[min_stock_df['last_purchase_price'] > 0])
+                print(f"💰 Товаров с ценами после добавления: {items_after_merge}")
+            else:
+                print("❌ Цены не найдены в ADS, устанавливаем 0")
+                min_stock_df['last_purchase_price'] = 0
+        
+        # Объединяем MIN запасы (уже с ценами) с остатками
         comparison = pd.merge(min_stock_df, current_stock_df, on='номенклатура', how='left')
         comparison['total_current_stock'] = comparison['total_current_stock'].fillna(0)
         
-        # Добавляем цены
-        if price_df is not None:
-            comparison = pd.merge(comparison, price_df, on='номенклатура', how='left')
-            if 'last_purchase_price' in comparison.columns:
-                comparison['last_purchase_price'] = comparison['last_purchase_price'].fillna(0)
-            else:
-                comparison['last_purchase_price'] = 0
-            print(f"✅ Цены добавлены к {len(comparison)} товарам")
-        else:
-            comparison['last_purchase_price'] = 0
-            print("⚠️ Цены не найдены, устанавливаем 0")
+        # ОТЛАДКА: Проверяем цены после объединения
+        final_items_with_price = len(comparison[comparison['last_purchase_price'] > 0])
+        print(f"🔍 Товаров с ценами после объединения: {final_items_with_price}")
         
-        # Основные расчеты
+        # Если цены все еще отсутствуют, устанавливаем 0
+        if 'last_purchase_price' not in comparison.columns:
+            print("⚠️ Колонка last_purchase_price отсутствует, создаем с нулями")
+            comparison['last_purchase_price'] = 0
+        else:
+            # Убеждаемся что цены в правильном формате
+            comparison['last_purchase_price'] = pd.to_numeric(
+                comparison['last_purchase_price'], errors='coerce'
+            ).fillna(0)
+        
+        # Основные расчеты дефицита
         comparison['stock_deficit'] = comparison['min_stock_total'] - comparison['total_current_stock']
         comparison['stock_deficit'] = comparison['stock_deficit'].apply(lambda x: max(0, x))
         
-        # НОВОЕ: Денежные расчеты
+        # Денежные расчеты (теперь цены точно есть)
         comparison['stock_deficit_money'] = comparison['stock_deficit'] * comparison['last_purchase_price']
         comparison['min_stock_money'] = comparison['min_stock_total'] * comparison['last_purchase_price']
         comparison['current_stock_money'] = comparison['total_current_stock'] * comparison['last_purchase_price']
@@ -83,7 +111,8 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         # Статус товара
         def determine_status(row):
             if row['stock_deficit'] > 0:
-                if row['current_stock_days'] < row['ip_target_days']:
+                ip_days = row.get('ip_target_days', 7)
+                if row['current_stock_days'] < ip_days:
                     return 'КРИТИЧНО'
                 else:
                     return 'НЕДОСТАТОК'
@@ -96,8 +125,6 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         safety_factor = getattr(system, 'default_params', {}).get('safety_factor', 1.0)
         comparison['recommended_order'] = comparison['stock_deficit'] * safety_factor
         comparison['recommended_order'] = comparison['recommended_order'].apply(lambda x: max(0, x))
-        
-        # НОВОЕ: Денежное выражение заказа
         comparison['recommended_order_money'] = comparison['recommended_order'] * comparison['last_purchase_price']
         
         # Приоритет заказа
@@ -105,19 +132,13 @@ def compare_stock_vs_min_with_prices(system) -> dict:
             lambda row: 'СРОЧНО' if row['status'] == 'КРИТИЧНО'
                        else 'ВЫСОКИЙ' if row['status'] == 'НЕДОСТАТОК' and row['ads'] > comparison['ads'].quantile(0.7)
                        else 'СРЕДНИЙ' if row['status'] == 'НЕДОСТАТОК'
-                       else 'НЕ ТРЕБУЕТСЯ', axis=1
+                       else 'НИЗКИЙ', axis=1
         )
-        
-        # Сортировка по денежному дефициту (критичные товары сначала)
-        priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
-        comparison['status_priority'] = comparison['status'].map(priority_order)
-        comparison = comparison.sort_values(['status_priority', 'stock_deficit_money'], ascending=[False, False])
-        comparison = comparison.drop('status_priority', axis=1)
         
         # Сохраняем результат
         system.stock_comparison = comparison
         
-        # Статистика результатов
+        # ФИНАЛЬНАЯ СТАТИСТИКА
         total_items = len(comparison)
         deficit_items = len(comparison[comparison['stock_deficit'] > 0])
         critical_items = len(comparison[comparison['status'] == 'КРИТИЧНО'])
@@ -126,11 +147,9 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         total_deficit_money = comparison['stock_deficit_money'].sum()
         total_recommended_order_money = comparison['recommended_order_money'].sum()
         
-        # Статистика по товарам с ценами
         items_with_price = len(comparison[comparison['last_purchase_price'] > 0])
         deficit_items_with_price = len(comparison[
-            (comparison['stock_deficit'] > 0) & 
-            (comparison['last_purchase_price'] > 0)
+            (comparison['stock_deficit'] > 0) & (comparison['last_purchase_price'] > 0)
         ])
         
         print(f"\n💰 ИТОГОВАЯ СТАТИСТИКА:")
@@ -142,6 +161,28 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         print(f"   Рекомендуемый заказ (деньги): {total_recommended_order_money:,.2f}")
         print(f"   Товаров с ценами: {items_with_price}/{total_items}")
         
+        if hasattr(system, 'calculated_max_stock') and system.calculated_max_stock is not None:
+            max_stock_df = system.calculated_max_stock[['номенклатура', 'max_stock']].copy()
+            comparison = pd.merge(comparison, max_stock_df, on='номенклатура', how='left')
+            comparison['max_stock'] = comparison['max_stock'].fillna(0)
+            
+            # Статус с учетом MAX
+            def determine_full_status(row):
+                current = row['total_current_stock']
+                min_stock = row['min_stock_total']
+                max_stock = row.get('max_stock', 0)
+                
+                if current < min_stock:
+                    return 'НЕДОСТАТОК'
+                elif max_stock > 0 and current > max_stock:
+                    return 'ИЗБЫТОК'
+                else:
+                    return row['status']  # Существующий статус
+            
+            comparison['full_status'] = comparison.apply(determine_full_status, axis=1)
+        
+        # Сохраняем результат
+        system.stock_comparison = comparison
         return {
             'success': True,
             'total_items': total_items,
@@ -156,11 +197,10 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         }
         
     except Exception as e:
-        print(f"❌ Ошибка сравнения: {str(e)}")
+        print(f"❌ Ошибка сравнения: '{str(e)}'")
         import traceback
         traceback.print_exc()
         return {'success': False, 'error': f"Ошибка сравнения остатков: {str(e)}"}
-
 # ===== ИСПРАВЛЕНИЕ 2: Обновляем метод calculate_min_stock =====
 
 def calculate_min_stock_with_prices(system, ip_target_days=None, min_stock_days=None) -> dict:

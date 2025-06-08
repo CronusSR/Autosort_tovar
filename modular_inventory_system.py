@@ -14,12 +14,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from subcategory_abc import SubcategoryABCAnalyzer
 
-try:
-    from complete_system_fixes import SystemFixer
-    FIXES_AVAILABLE = True
-except ImportError:
-    FIXES_AVAILABLE = False
-    print("⚠️ Файл complete_system_fixes.py не найден")
 
 
 warnings.filterwarnings('ignore')
@@ -48,12 +42,7 @@ class ModularInventorySystem:
         self.combined_sales_data = None
         self.is_multiple_files_mode = False
         self.processing_log = []
-        self._fixes_applied = False
-
-        if FIXES_AVAILABLE:
-            fixer = SystemFixer()
-            fixer.apply_all_fixes(self)
-            print("✅ Исправления применены автоматически при инициализации")
+        
         # Параметры по умолчанию
         self.default_params = {
             'ip_target_days': 7,
@@ -163,236 +152,144 @@ class ModularInventorySystem:
             print(f"Ошибка экспорта подкатегорий: {str(e)}")
             return None
 
-    def load_sales_file_updated_with_prices(self, file_content) -> dict:
+    def load_sales_file_updated(self, file_content) -> Dict:
         """
         ИСПРАВЛЕННАЯ загрузка файла продаж с извлечением цен из колонки 12
         """
         try:
-            print("🔄 Обработка файла с ИСПРАВЛЕННОЙ логикой ADS + ЦЕНЫ (колонка 12)...")
-        
+            print("🔄 Обработка файла с поддержкой цен...")
+            
             # Читаем Excel файл
             if hasattr(file_content, 'read'):
                 df = pd.read_excel(file_content, engine='openpyxl')
             else:
                 df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
-        
+            
             print(f"📊 Исходный размер файла: {df.shape[0]} строк, {df.shape[1]} колонок")
             
-            # ИСПРАВЛЕННЫЕ параметры
-            start_col_index = 12  # Колонка M
-            end_col_index = 28    # Колонка AB+1 (не включается)
+            # Параметры обработки
+            start_col_index = 12  # Колонка M (продажи)
+            end_col_index = 28    # Колонка AB+1
             start_row = 3         # Строка 4 (индекс 3)
-            nomenclature_col = 1  # Колонка B (индекс 1)
-            price_col = 11        # НОВОЕ: Колонка 12 "Посл. закупка" (индекс 11)
+            nomenclature_col = 1  # Колонка B (номенклатура)
+            price_col = 11        # 🔧 НОВОЕ: Колонка 12 "Посл. закупка" (индекс 11)
             
-            print(f"📋 ИСПРАВЛЕННАЯ ЛОГИКА С ЦЕНАМИ:")
-            print(f"   • Номенклатура: Колонка B (индекс {nomenclature_col})")
-            print(f"   • ЦЕНЫ: Колонка 12 'Посл. закупка' (индекс {price_col})")
-            print(f"   • Данные продаж: колонки {start_col_index}:{end_col_index} (M:AB)")
-            print(f"   • Начальная строка: {start_row+1}")
+            print(f"📋 Параметры обработки:")
+            print(f"   • Номенклатура: Колонка B")
+            print(f"   • ЦЕНЫ: Колонка 12 'Посл. закупка'")  # 🔧 НОВОЕ
+            print(f"   • Данные продаж: колонки M:AB")
             
             # Проверяем достаточность колонок
-            if df.shape[1] < end_col_index:
+            if df.shape[1] <= max(end_col_index, price_col, nomenclature_col):
                 return {
                     'success': False,
-                    'error': f'Недостаточно колонок в файле. Нужно минимум {end_col_index}, есть {df.shape[1]}'
+                    'error': f'Недостаточно колонок в файле. Нужно минимум {max(end_col_index, price_col, nomenclature_col)+1} колонок.'
                 }
             
-            # Получаем номенклатуру из колонки B (индекс 1)
-            nomenclature_data = df.iloc[start_row:, nomenclature_col].copy()
+            # Получаем номенклатуру (колонка B)
+            nomenclature_series = df.iloc[start_row:, nomenclature_col]
+            valid_nomenclature = nomenclature_series.dropna()
             
-            # НОВОЕ: Получаем цены из колонки 12 (индекс 11)
-            price_data = df.iloc[start_row:, price_col].copy()
-            print(f"💰 Извлечение цен из колонки 12 (индекс {price_col})...")
+            if len(valid_nomenclature) == 0:
+                return {'success': False, 'error': 'Не найдена номенклатура в колонке B начиная с 4-й строки'}
             
-            # Очищаем номенклатуру
-            print("🧹 Очистка номенклатуры из колонки B...")
-            initial_count = len(nomenclature_data)
+            # 🔧 НОВОЕ: Получаем цены (колонка 12)
+            price_series = df.iloc[start_row:start_row+len(valid_nomenclature), price_col]
             
-            nomenclature_clean = nomenclature_data.dropna()
-            nomenclature_clean = nomenclature_clean[nomenclature_clean.astype(str).str.strip() != '']
-            nomenclature_clean = nomenclature_clean[nomenclature_clean.astype(str) != 'nan']
+            # Получаем данные продаж (колонки M:AB)
+            sales_columns = df.iloc[start_row:start_row+len(valid_nomenclature), start_col_index:end_col_index]
             
-            # Исключаем последнюю строчку
-            if len(nomenclature_clean) > 0:
-                nomenclature_clean = nomenclature_clean[:-1]
-                print("✅ Исключена последняя строчка")
-            
-            valid_indices = nomenclature_clean.index
-            print(f"📊 После очистки: {len(nomenclature_clean)} товаров (было {initial_count})")
-            
-            if len(nomenclature_clean) == 0:
-                return {
-                    'success': False,
-                    'error': 'Нет валидных товаров после очистки номенклатуры из колонки B'
-                }
-            
-            # Извлекаем данные продаж из диапазона M:AB
-            print("📈 Извлечение данных из диапазона M4:AB...")
-            
-            sales_data_list = []
-            prices_processed = 0
+            # Создаем DataFrame для обработки
+            ads_data = []
             prices_found = 0
             
-            for idx in valid_indices:
-                item_name = str(nomenclature_clean.loc[idx]).strip()
+            for i, (idx, name) in enumerate(valid_nomenclature.items()):
+                if pd.isna(name) or str(name).strip() == '':
+                    continue
                 
-                # Извлекаем данные из колонок M:AB для данной строки
-                row_sales_data = df.iloc[idx, start_col_index:end_col_index].copy()
+                # Получаем продажи
+                sales_row = sales_columns.iloc[i]
+                numeric_sales = pd.to_numeric(sales_row, errors='coerce').fillna(0)
                 
-                # Преобразуем в числовой формат, заменяя NaN и пустые на 0
-                row_sales_numeric = pd.to_numeric(row_sales_data, errors='coerce').fillna(0)
+                # 🔧 НОВОЕ: Получаем цену
+                price = price_series.iloc[i] if i < len(price_series) else None
+                price_value = 0
                 
-                # НОВОЕ: Извлекаем цену для данного товара
-                try:
-                    item_price = pd.to_numeric(price_data.loc[idx], errors='coerce')
-                    if pd.isna(item_price) or item_price < 0:
-                        item_price = 0.0
-                    else:
-                        prices_found += 1
-                    prices_processed += 1
-                except:
-                    item_price = 0.0
-                    prices_processed += 1
-                
-                # НОВАЯ ФОРМУЛА РАСЧЕТА ADS:
-                # 1. Получаем среднее значение от M4:AB4
-                average_value = row_sales_numeric.mean()
-                
-                # 2. Делим среднее значение на 30
-                ads_value = average_value / 30
-                
-                try:
-                    if price_data is not None:
-                        item_price = pd.to_numeric(price_data.loc[idx], errors='coerce')
-                        if pd.isna(item_price) or item_price < 0:
-                            item_price = 0.0
-                        else:
-                            if 'prices_found' not in locals():
-                                prices_found = 0
+                if pd.notna(price):
+                    try:
+                        price_value = float(price)
+                        if price_value > 0:
                             prices_found += 1
-                    else:
-                        item_price = 0.0
-                except:
-                    item_price = 0.0
-
-                sales_data_list.append({
-                    'номенклатура': item_name,
-                    'ads': ads_value,
-                    'average_value': average_value,
-                    'total_sales': row_sales_numeric.sum(),
-                    'monthly_data': row_sales_numeric.tolist(),
-                    'last_purchase_price': float(item_price)  # ДОБАВИТЬ ЭТУ СТРОКУ
+                    except (ValueError, TypeError):
+                        price_value = 0
+                
+                # Рассчитываем ADS
+                if len(numeric_sales) > 0:
+                    monthly_avg = numeric_sales.mean()
+                    ads = monthly_avg / 30
+                    total_sales = numeric_sales.sum()
+                else:
+                    monthly_avg = 0
+                    ads = 0
+                    total_sales = 0
+                
+                ads_data.append({
+                    'номенклатура': str(name).strip(),
+                    'total_quantity_sold': total_sales,
+                    'total_sales': total_sales,  # Для совместимости
+                    'monthly_average': monthly_avg,
+                    'ads': ads,
+                    'last_purchase_price': price_value  # 🔧 НОВОЕ: Добавляем цену
                 })
             
-            # Создаем DataFrame
-            ads_df = pd.DataFrame(sales_data_list)
+            # Создаем итоговый DataFrame
+            ads_df = pd.DataFrame(ads_data)
             
-            # Сохраняем результаты в системе
-            self.sales_data = ads_df
-            columns_to_keep = ['номенклатура', 'ads', 'average_value', 'total_sales']
-            if 'last_purchase_price' in ads_df.columns:
-                columns_to_keep.append('last_purchase_price')
-            self.calculated_ads = ads_df[columns_to_keep].copy()
-            # НОВОЕ: Статистика по ценам
-            print(f"\n💰 СТАТИСТИКА ЦЕН:")
-            print(f"   Цен обработано: {prices_processed}")
-            print(f"   Цен найдено: {prices_found}")
-            print(f"   Покрытие ценами: {(prices_found/prices_processed*100):.1f}%")
+            # Исключаем последнюю строку (как в оригинале)
+            if len(ads_df) > 1:
+                ads_df = ads_df.iloc[:-1].copy()
             
-            if prices_found > 0:
-                valid_prices = ads_df[ads_df['last_purchase_price'] > 0]['last_purchase_price']
-                print(f"   Средняя цена: {valid_prices.mean():.2f}")
-                print(f"   Мин. цена: {valid_prices.min():.2f}")
-                print(f"   Макс. цена: {valid_prices.max():.2f}")
-            
-            # Создаем JSON данные для системы
-            json_output = {
-                'metadata': {
-                    'file_processed_at': pd.Timestamp.now().isoformat(),
-                    'total_items': len(ads_df),
-                    'nomenclature_column': 'B',
-                    'price_column': '12 (Посл. закупка)',  # НОВОЕ
-                    'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
-                    'calculation_method': 'average_monthly_divided_by_30_with_prices',
-                    'formula': 'ADS = (среднее от M4:AB4) / 30',
-                    'last_row_excluded': True,
-                    'prices_extracted': True,  # НОВОЕ
-                    'prices_found': prices_found,  # НОВОЕ
-                    'price_coverage': f"{(prices_found/prices_processed*100):.1f}%"  # НОВОЕ
-                },
-                'summary_stats': {
-                    'total_ads': float(ads_df['ads'].sum()),
-                    'average_ads': float(ads_df['ads'].mean()),
-                    'max_ads': float(ads_df['ads'].max()),
-                    'min_ads': float(ads_df['ads'].min()),
-                    'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum()),  # НОВОЕ
-                    'average_price': float(valid_prices.mean()) if prices_found > 0 else 0  # НОВОЕ
-                },
-                'items': [
-                    {
-                        'nomenclature': row['номенклатура'],
-                        'ads_daily': row['ads'],
-                        'average_monthly': row['average_value'],
-                        'total_period': row['total_sales'],
-                        'monthly_data': row['monthly_data'],
-                        'last_purchase_price': row['last_purchase_price']  # НОВОЕ: ДОБАВЛЯЕМ ЦЕНУ В JSON
-                    }
-                    for _, row in ads_df.iterrows()
-                ]
-            }
-            
-            # Сохраняем JSON в системе
-            if not hasattr(self, '_json_data'):
-                self._json_data = {}
-            self._json_data['ads'] = json_output
+            # Сохраняем результат
+            self.calculated_ads = ads_df
+            self.sales_data = ads_df  # Для совместимости
             
             # Статистика
             positive_ads_count = len(ads_df[ads_df['ads'] > 0])
             
-            print(f"\n📊 РЕЗУЛЬТАТЫ ИСПРАВЛЕННОЙ ЛОГИКИ С ЦЕНАМИ:")
-            print("=" * 60)
-            print(f"Номенклатура читается из: Колонка B")
-            print(f"ЦЕНЫ читаются из: Колонка 12 'Посл. закупка'")
-            print(f"Обработано товаров: {len(ads_df)}")
-            print(f"Диапазон продаж: M{start_row+1}:AB{start_row+1+len(ads_df)}")
-            print(f"Формула: ADS = (среднее месячное) / 30")
-            print(f"Общий ADS: {ads_df['ads'].sum():.2f}")
-            print(f"Средний ADS: {ads_df['ads'].mean():.4f}")
-            print(f"Товаров с положительным ADS: {positive_ads_count}")
-            print(f"Товаров с ценами: {prices_found}/{len(ads_df)}")
+            print(f"✅ Обработка завершена:")
+            print(f"   Товаров: {len(ads_df)}")
+            print(f"   С положительным ADS: {positive_ads_count}")
+            print(f"   📊 Общий ADS: {ads_df['ads'].sum():.2f}")
+            print(f"   💰 ЦЕНЫ: найдено {prices_found} из {len(ads_df)} товаров")  # 🔧 НОВОЕ
             
-            # Топ товары с ценами
-            print(f"\n🏆 Топ-5 товаров по новому ADS (с ценами):")
-            top_sellers = ads_df.nlargest(5, 'ads')
-            for i, (_, row) in enumerate(top_sellers.iterrows(), 1):
-                price_info = f"Цена: {row['last_purchase_price']:.2f} ₽" if row['last_purchase_price'] > 0 else "Цена: не указана"
-                print(f"  {i}. {row['номенклатура'][:40]:<40} | ADS: {row['ads']:>8.4f} | {price_info}")
+            # 🔧 НОВОЕ: Топ товары с ценами
+            if prices_found > 0:
+                print(f"\n🏆 Топ-3 товара по ADS (с ценами):")
+                top_with_prices = ads_df[ads_df['last_purchase_price'] > 0].nlargest(3, 'ads')
+                for i, (_, row) in enumerate(top_with_prices.iterrows(), 1):
+                    print(f"  {i}. {row['номенклатура'][:40]} | ADS: {row['ads']:.4f} | Цена: {row['last_purchase_price']:.2f} ₽")
             
             return {
                 'success': True,
                 'total_items': len(ads_df),
                 'nomenclature_column': 'B',
-                'price_column': '12 (Посл. закупка)',  # НОВОЕ
-                'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
-                'calculation_method': 'average_monthly_divided_by_30_with_prices',
-                'formula': 'ADS = (среднее от M4:AB4) / 30',
+                'price_column': '12 (Посл. закупка)',  # 🔧 НОВОЕ
+                'calculation_method': 'average_monthly_divided_by_30_with_prices',  # 🔧 ОБНОВЛЕНО
                 'total_ads': ads_df['ads'].sum(),
                 'average_ads': ads_df['ads'].mean(),
                 'items_with_positive_ads': positive_ads_count,
-                'json_data_created': True,
-                'last_row_excluded': True,
-                'prices_extracted': True,  # НОВОЕ
-                'prices_found': prices_found,  # НОВОЕ
-                'price_coverage_percentage': (prices_found/prices_processed*100) if prices_processed > 0 else 0,  # НОВОЕ
-                'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum())  # НОВОЕ
+                'prices_extracted': True,  # 🔧 НОВОЕ
+                'prices_found': prices_found,  # 🔧 НОВОЕ
+                'price_coverage_percentage': (prices_found/len(ads_df)*100) if len(ads_df) > 0 else 0,  # 🔧 НОВОЕ
+                'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum())  # 🔧 НОВОЕ
             }
+            
         except Exception as e:
-            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
+            print(f"❌ Ошибка: {str(e)}")
             import traceback
             traceback.print_exc()
-            return {'success': False, 'error': f"Ошибка загрузки файла продаж: {str(e)}"}
-    
+            return {'success': False, 'error': f"Ошибка загрузки файла: {str(e)}"}
+        
     def apply_ads_price_fix_to_system(system):
         """
         Применение исправленного метода load_sales_file_updated к системе
@@ -1252,15 +1149,19 @@ class ModularInventorySystem:
     
     def calculate_min_stock(self, ip_target_days: int = None, min_stock_days: int = None) -> Dict:
         """
-        ИСПРАВЛЕННЫЙ расчет минимальных запасов на основе ADS
-        Безопасная работа с ценовыми данными
+        Расчет минимальных запасов на основе ADS
+        
+        Args:
+            ip_target_days: Транзитное время в днях
+            min_stock_days: Количество дней запаса
+            
+        Returns:
+            Dict с результатами расчета минимальных запасов
         """
         if self.calculated_ads is None:
             return {'success': False, 'error': 'ADS не рассчитан. Сначала загрузите файл продаж.'}
         
         try:
-            print("📋 Расчет минимальных запасов...")
-            
             # Используем переданные параметры или значения по умолчанию
             ip_days = ip_target_days or self.default_params['ip_target_days']
             stock_days = min_stock_days or self.default_params['min_stock_days']
@@ -1280,40 +1181,13 @@ class ModularInventorySystem:
             # Итоговый минимальный запас = базовый запас + транзитное потребление
             df['min_stock_total'] = df['min_stock_base'] + df['transit_consumption']
             
-            # ИСПРАВЛЕНИЕ: Безопасная работа с ценовыми данными
-            has_price_data = 'last_purchase_price' in df.columns
-            print(f"💰 Ценовые данные в MIN запасах: {'найдены' if has_price_data else 'отсутствуют'}")
-            
-            if has_price_data:
-                # Заполняем пропуски в ценах
-                df['last_purchase_price'] = df['last_purchase_price'].fillna(0)
-                
-                # Денежные расчеты
-                df['min_stock_money'] = df['min_stock_total'] * df['last_purchase_price']
-                df['transit_consumption_money'] = df['transit_consumption'] * df['last_purchase_price']
-                df['min_stock_base_money'] = df['min_stock_base'] * df['last_purchase_price']
-                
-                total_min_stock_money = df['min_stock_money'].sum()
-                items_with_price = len(df[df['last_purchase_price'] > 0])
-                
-                print(f"💰 Денежные расчеты MIN запасов:")
-                print(f"   Стоимость MIN запасов: {total_min_stock_money:,.2f} ₽")
-                print(f"   Товаров с ценами: {items_with_price}")
-            else:
-                # Создаем пустые денежные колонки
-                df['last_purchase_price'] = 0
-                df['min_stock_money'] = 0
-                df['transit_consumption_money'] = 0
-                df['min_stock_base_money'] = 0
-                print("⚠️ Цены отсутствуют в ADS данных")
-            
             # Добавляем статус и приоритет
-            df['priority'] = df['ads'].apply(lambda x: 'ВЫСОКИЙ' if x > df['ads'].quantile(0.8) else 
-                                           'СРЕДНИЙ' if x > df['ads'].quantile(0.5) else 'НИЗКИЙ')
+            df['priority'] = df['ads'].apply(lambda x: 'Высокий' if x > df['ads'].quantile(0.8) else 
+                                           'Средний' if x > df['ads'].quantile(0.5) else 'Низкий')
             
             self.calculated_min_stock = df
             
-            result = {
+            return {
                 'success': True,
                 'total_items': len(df),
                 'total_min_stock': df['min_stock_total'].sum(),
@@ -1323,30 +1197,12 @@ class ModularInventorySystem:
                     'ip_target_days': ip_days,
                     'min_stock_days': stock_days
                 },
-                'has_price_data': has_price_data,
                 'top_min_stock': df.nlargest(5, 'min_stock_total')[['номенклатура', 'min_stock_total', 'ads']].to_dict('records')
             }
             
-            # Добавляем денежную информацию если есть
-            if has_price_data:
-                result['money_metrics'] = {
-                    'total_min_stock_money': df['min_stock_money'].sum(),
-                    'items_with_price': len(df[df['last_purchase_price'] > 0])
-                }
-            
-            print(f"✅ MIN запасы рассчитаны для {len(df)} товаров")
-            print(f"📊 Общий MIN запас: {df['min_stock_total'].sum():,.0f}")
-            if has_price_data:
-                print(f"💰 Стоимость MIN запасов: {df['min_stock_money'].sum():,.2f} ₽")
-            
-            return result
-            
         except Exception as e:
-            print(f"❌ Ошибка расчета MIN запасов: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return {'success': False, 'error': f"Ошибка расчета минимальных запасов: {str(e)}"}
-
+    
     def load_current_stock_file(self, file_content) -> Dict:
         """
         Загрузка файла текущих остатков
@@ -1438,197 +1294,12 @@ class ModularInventorySystem:
         except Exception as e:
             return {'success': False, 'error': f"Ошибка загрузки файла остатков: {str(e)}"}
     
-    def load_sales_file_updated(self, file_content) -> dict:
-        """
-        ИСПРАВЛЕННЫЙ метод загрузки файла продаж с извлечением цен из колонки 12
-        """
-        try:
-            print("🔄 Обработка файла с логикой B-колонка + цены...")
-        
-            # Читаем Excel файл
-            if hasattr(file_content, 'read'):
-                df = pd.read_excel(file_content, engine='openpyxl')
-            else:
-                df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
-        
-            print(f"📊 Исходный размер файла: {df.shape[0]} строк, {df.shape[1]} колонок")
-            
-            # ИСПРАВЛЕННЫЕ параметры
-            start_col_index = 12  # Колонка M
-            end_col_index = 28    # Колонка AB+1 (не включается)
-            start_row = 3         # Строка 4 (индекс 3)
-            nomenclature_col = 1  # Колонка B (индекс 1)
-            price_col = 11        # Колонка 12 "Посл. закупка" (индекс 11)
-            
-            print(f"📋 Параметры обработки:")
-            print(f"   • Номенклатура: Колонка B (индекс {nomenclature_col})")
-            print(f"   • ЦЕНЫ: Колонка 12 'Посл. закупка' (индекс {price_col})")
-            print(f"   • Данные продаж: колонки {start_col_index}:{end_col_index} (M:AB)")
-            print(f"   • Начальная строка: {start_row+1}")
-            
-            # Проверяем достаточность колонок
-            if df.shape[1] <= max(end_col_index, price_col, nomenclature_col):
-                return {
-                    'success': False,
-                    'error': f'Недостаточно колонок в файле. Нужно минимум {max(end_col_index, price_col)+1}, есть {df.shape[1]}'
-                }
-            
-            # Получаем номенклатуру из колонки B
-            nomenclature_data = df.iloc[start_row:, nomenclature_col].copy()
-            
-            # Получаем цены из колонки 12
-            price_data = df.iloc[start_row:, price_col].copy()
-            print(f"💰 Извлечение цен из колонки {price_col+1} (L - 'Посл. закупка')...")
-            
-            # Очищаем номенклатуру
-            print("🧹 Очистка номенклатуры...")
-            nomenclature_clean = nomenclature_data.dropna()
-            nomenclature_clean = nomenclature_clean[nomenclature_clean.astype(str).str.strip() != '']
-            nomenclature_clean = nomenclature_clean[nomenclature_clean.astype(str) != 'nan']
-            
-            # Исключаем последнюю строчку
-            if len(nomenclature_clean) > 0:
-                nomenclature_clean = nomenclature_clean[:-1]
-                print("✅ Исключена последняя строчка")
-            
-            valid_indices = nomenclature_clean.index
-            print(f"📊 После очистки: {len(nomenclature_clean)} товаров")
-            
-            if len(nomenclature_clean) == 0:
-                return {
-                    'success': False,
-                    'error': 'Нет валидных товаров после очистки номенклатуры'
-                }
-            
-            # Обрабатываем данные товаров
-            print("📈 Обработка данных товаров с ценами...")
-            
-            sales_data_list = []
-            prices_processed = 0
-            prices_found = 0
-            
-            for idx in valid_indices:
-                item_name = str(nomenclature_clean.loc[idx]).strip()
-                
-                # Извлекаем данные продаж из колонок M:AB
-                row_sales_data = df.iloc[idx, start_col_index:end_col_index].copy()
-                row_sales_numeric = pd.to_numeric(row_sales_data, errors='coerce').fillna(0)
-                
-                # Извлекаем цену для данного товара
-                try:
-                    item_price = pd.to_numeric(price_data.loc[idx], errors='coerce')
-                    if pd.isna(item_price) or item_price < 0:
-                        item_price = 0.0
-                    else:
-                        prices_found += 1
-                    prices_processed += 1
-                except:
-                    item_price = 0.0
-                    prices_processed += 1
-                
-                # Формула ADS: среднее значение / 30
-                average_value = row_sales_numeric.mean()
-                ads_value = average_value / 30
-                
-                sales_data_list.append({
-                    'номенклатура': item_name,
-                    'ads': ads_value,
-                    'average_value': average_value,
-                    'total_sales': row_sales_numeric.sum(),
-                    'monthly_data': row_sales_numeric.tolist(),
-                    'last_purchase_price': float(item_price)
-                })
-            
-            # Создаем DataFrame
-            ads_df = pd.DataFrame(sales_data_list)
-            
-            # Сохраняем результаты в системе
-            self.sales_data = ads_df
-            self.calculated_ads = ads_df[['номенклатура', 'ads', 'average_value', 'total_sales', 'last_purchase_price']].copy()
-            
-            # Статистика по ценам
-            print(f"\n💰 СТАТИСТИКА ЦЕН:")
-            print(f"   Обработано: {prices_processed} товаров")
-            print(f"   С ценами: {prices_found} товаров")
-            print(f"   Покрытие: {(prices_found/prices_processed*100):.1f}%")
-            
-            if prices_found > 0:
-                valid_prices = ads_df[ads_df['last_purchase_price'] > 0]['last_purchase_price']
-                print(f"   Средняя цена: {valid_prices.mean():.2f} ₽")
-                print(f"   Диапазон цен: {valid_prices.min():.2f} - {valid_prices.max():.2f} ₽")
-            
-            # JSON данные с ценами
-            json_output = {
-                'metadata': {
-                    'file_processed_at': pd.Timestamp.now().isoformat(),
-                    'total_items': len(ads_df),
-                    'nomenclature_column': 'B',
-                    'price_column': 'L (12) - Посл. закупка',
-                    'range_used': f'M{start_row+1}:AB{start_row+1+len(ads_df)}',
-                    'calculation_method': 'average_monthly_divided_by_30_with_prices',
-                    'formula': 'ADS = (среднее от M:AB) / 30',
-                    'prices_extracted': True,
-                    'prices_found': prices_found,
-                    'price_coverage': f"{(prices_found/prices_processed*100):.1f}%"
-                },
-                'summary_stats': {
-                    'total_ads': float(ads_df['ads'].sum()),
-                    'average_ads': float(ads_df['ads'].mean()),
-                    'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum()),
-                    'average_price': float(valid_prices.mean()) if prices_found > 0 else 0
-                },
-                'items': [
-                    {
-                        'nomenclature': row['номенклатура'],
-                        'ads_daily': row['ads'],
-                        'average_monthly': row['average_value'],
-                        'last_purchase_price': row['last_purchase_price']
-                    }
-                    for _, row in ads_df.iterrows()
-                ]
-            }
-            
-            # Сохраняем JSON
-            if not hasattr(self, '_json_data'):
-                self._json_data = {}
-            self._json_data['ads'] = json_output
-            
-            positive_ads_count = len(ads_df[ads_df['ads'] > 0])
-            
-            print(f"\n📊 РЕЗУЛЬТАТЫ:")
-            print("=" * 60)
-            print(f"✅ Обработано товаров: {len(ads_df)}")
-            print(f"✅ С положительным ADS: {positive_ads_count}")
-            print(f"💰 С ценами: {prices_found}/{len(ads_df)} ({(prices_found/len(ads_df)*100):.1f}%)")
-            print(f"📈 Общий ADS: {ads_df['ads'].sum():.2f}")
-            
-            return {
-                'success': True,
-                'total_items': len(ads_df),
-                'nomenclature_column': 'B',
-                'price_column': 'L (12) - Посл. закупка',
-                'calculation_method': 'average_monthly_divided_by_30_with_prices',
-                'total_ads': ads_df['ads'].sum(),
-                'average_ads': ads_df['ads'].mean(),
-                'items_with_positive_ads': positive_ads_count,
-                'prices_extracted': True,
-                'prices_found': prices_found,
-                'price_coverage_percentage': (prices_found/prices_processed*100) if prices_processed > 0 else 0,
-                'total_inventory_value': float((ads_df['ads'] * 30 * ads_df['last_purchase_price']).sum())
-            }
-            
-        except Exception as e:
-            print(f"❌ Ошибка: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return {'success': False, 'error': f"Ошибка загрузки файла: {str(e)}"}
-
-
-
     def compare_stock_vs_min(self) -> Dict:
         """
-        ИСПРАВЛЕННОЕ сравнение текущих остатков с минимальными запасами
-        Безопасная работа с ценовыми данными
+        Сравнение текущих остатков с минимальными запасами
+        
+        Returns:
+            Dict с результатами сравнения
         """
         if self.calculated_min_stock is None:
             return {'success': False, 'error': 'Минимальные запасы не рассчитаны'}
@@ -1637,21 +1308,9 @@ class ModularInventorySystem:
             return {'success': False, 'error': 'Текущие остатки не загружены'}
         
         try:
-            print("⚖️ Сравнение остатков с минимальными запасами...")
-            
             # Объединяем данные по номенклатуре
             min_stock_df = self.calculated_min_stock.copy()
             current_stock_df = self.stock_data[['номенклатура', 'total_current_stock']].copy()
-            
-            # 🔧 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Добавляем цены из ADS если их нет в MIN запасах
-            if 'last_purchase_price' not in min_stock_df.columns:
-                if (hasattr(self, 'calculated_ads') and 
-                    self.calculated_ads is not None and 
-                    'last_purchase_price' in self.calculated_ads.columns):
-                    print("🔧 Добавляем цены из ADS данных...")
-                    price_df = self.calculated_ads[['номенклатура', 'last_purchase_price']].copy()
-                    min_stock_df = pd.merge(min_stock_df, price_df, on='номенклатура', how='left')
-                    min_stock_df['last_purchase_price'] = min_stock_df['last_purchase_price'].fillna(0)
             
             # Merge данных
             comparison = pd.merge(
@@ -1668,33 +1327,23 @@ class ModularInventorySystem:
             comparison['stock_deficit'] = comparison['min_stock_total'] - comparison['total_current_stock']
             comparison['stock_deficit'] = comparison['stock_deficit'].apply(lambda x: max(0, x))
             
-            # ИСПРАВЛЕНИЕ: Безопасная работа с ценовыми данными
-            has_price_data = 'last_purchase_price' in comparison.columns
-            print(f"💰 Ценовые данные: {'найдены' if has_price_data else 'отсутствуют'}")
-            
-            if has_price_data:
-                # Заполняем пропуски в ценах
-                comparison['last_purchase_price'] = comparison['last_purchase_price'].fillna(0)
-                
-                # Денежные расчеты дефицита
+            if 'last_purchase_price' in comparison.columns:
                 comparison['stock_deficit_money'] = comparison['stock_deficit'] * comparison['last_purchase_price']
                 comparison['min_stock_money'] = comparison['min_stock_total'] * comparison['last_purchase_price']
                 comparison['current_stock_money'] = comparison['total_current_stock'] * comparison['last_purchase_price']
             else:
-                # Если цен нет, ставим 0
-                comparison['last_purchase_price'] = 0
                 comparison['stock_deficit_money'] = 0
-                comparison['min_stock_money'] = 0
+                comparison['min_stock_money'] = 0  
                 comparison['current_stock_money'] = 0
-            
-            # Рассчитываем дни остатка
+
+            # Текущий запас в днях
             comparison['current_stock_days'] = np.where(
                 comparison['ads'] > 0,
                 comparison['total_current_stock'] / comparison['ads'],
                 0
             )
             
-            # Определяем статус товара
+            # Статус товара
             def determine_status(row):
                 if row['stock_deficit'] > 0:
                     if row['current_stock_days'] < row['ip_target_days']:
@@ -1706,67 +1355,66 @@ class ModularInventorySystem:
             
             comparison['status'] = comparison.apply(determine_status, axis=1)
             
-            # Рекомендуемый заказ
-            safety_factor = getattr(self, 'default_params', {}).get('safety_factor', 1.0)
+            # Рекомендуемый заказ с учетом коэффициента безопасности
+            safety_factor = self.default_params['safety_factor']
             comparison['recommended_order'] = comparison['stock_deficit'] * safety_factor
             comparison['recommended_order'] = comparison['recommended_order'].apply(lambda x: max(0, x))
             
-            # Денежное выражение рекомендуемого заказа
-            comparison['recommended_order_money'] = comparison['recommended_order'] * comparison['last_purchase_price']
-            
+            if 'last_purchase_price' in comparison.columns:
+                comparison['recommended_order_money'] = comparison['recommended_order'] * comparison['last_purchase_price']
+            else:
+                comparison['recommended_order_money'] = 0
+
             # Приоритет заказа
             comparison['order_priority'] = comparison.apply(
                 lambda row: 'СРОЧНО' if row['status'] == 'КРИТИЧНО'
-                           else 'ВЫСОКИЙ' if row['status'] == 'НЕДОСТАТОК' and row['ads'] > comparison['ads'].quantile(0.8)
+                           else 'ВЫСОКИЙ' if row['status'] == 'НЕДОСТАТОК' and row['ads'] > comparison['ads'].quantile(0.7)
                            else 'СРЕДНИЙ' if row['status'] == 'НЕДОСТАТОК'
-                           else 'НИЗКИЙ', axis=1
+                           else 'НЕ ТРЕБУЕТСЯ', axis=1
             )
             
-            # Сохраняем результат
+            
+            # Сортировка по денежному дефициту если есть цены
+            if 'stock_deficit_money' in comparison.columns and comparison['stock_deficit_money'].sum() > 0:
+                priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
+                comparison['status_priority'] = comparison['status'].map(priority_order)
+                comparison = comparison.sort_values(['status_priority', 'stock_deficit_money'], ascending=[False, False])
+                comparison = comparison.drop('status_priority', axis=1)
+            else:
+                # Обычная сортировка по количественному дефициту
+                priority_order = {'КРИТИЧНО': 4, 'НЕДОСТАТОК': 3, 'ДОСТАТОЧНО': 2}
+                comparison['status_priority'] = comparison['status'].map(priority_order)
+                comparison = comparison.sort_values(['status_priority', 'stock_deficit'], ascending=[False, False])
+                comparison = comparison.drop('status_priority', axis=1)
+            
             self.stock_comparison = comparison
             
-            # Возвращаем статистику
+            # Статистика результатов
             total_items = len(comparison)
             deficit_items = len(comparison[comparison['stock_deficit'] > 0])
             critical_items = len(comparison[comparison['status'] == 'КРИТИЧНО'])
+            sufficient_items = len(comparison[comparison['status'] == 'ДОСТАТОЧНО'])
             
-            print(f"📊 Результаты сравнения:")
-            print(f"   Всего товаров: {total_items}")
-            print(f"   С дефицитом: {deficit_items}")
-            print(f"   Критичных: {critical_items}")
+            total_deficit_value = comparison['stock_deficit'].sum()
+            total_recommended_order = comparison['recommended_order'].sum()
             
-            result = {
+            return {
                 'success': True,
                 'total_items': total_items,
                 'deficit_items': deficit_items,
                 'critical_items': critical_items,
-                'total_deficit': comparison['stock_deficit'].sum(),
-                'has_price_data': has_price_data
+                'sufficient_items': sufficient_items,
+                'deficit_percentage': (deficit_items / total_items) * 100,
+                'total_deficit_value': total_deficit_value,
+                'total_recommended_order': total_recommended_order,
+                'top_deficit_items': comparison[comparison['stock_deficit'] > 0].head(10)[
+                    ['номенклатура', 'stock_deficit', 'current_stock_days', 'status', 'order_priority']
+                ].to_dict('records')
             }
             
-            if has_price_data:
-                total_deficit_money = comparison['stock_deficit_money'].sum()
-                total_recommended_money = comparison['recommended_order_money'].sum()
-                items_with_price = len(comparison[comparison['last_purchase_price'] > 0])
-                
-                result.update({
-                    'total_deficit_money': total_deficit_money,
-                    'total_recommended_order_money': total_recommended_money,
-                    'items_with_price': items_with_price,
-                    'price_coverage_percentage': (items_with_price / total_items) * 100 if total_items > 0 else 0
-                })
-                
-                print(f"   Дефицит в деньгах: {total_deficit_money:,.2f} ₽")
-                print(f"   Товаров с ценами: {items_with_price}")
-            
-            return result
-            
         except Exception as e:
-            print(f"❌ Ошибка сравнения: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return {'success': False, 'error': f"Ошибка сравнения остатков: {str(e)}"}
-        
+    
     def get_system_status(self) -> Dict:
         """
         Получение статуса всей системы
@@ -1789,11 +1437,6 @@ class ModularInventorySystem:
             'min_stock_analysis': {
                 'calculated': self.calculated_min_stock is not None,
                 'items_count': len(self.calculated_min_stock) if self.calculated_min_stock is not None else 0
-            },
-            'max_stock_analysis': {
-            'calculated': hasattr(self, 'calculated_max_stock') and self.calculated_max_stock is not None,
-            'items_count': len(self.calculated_max_stock) if hasattr(self, 'calculated_max_stock') and self.calculated_max_stock is not None else 0,
-            'efficiency_analyzed': hasattr(self, 'stock_comparison_with_max') and self.stock_comparison_with_max is not None
             },
             'stock_analysis': {
                 'loaded': self.stock_data is not None,
@@ -1826,21 +1469,20 @@ class ModularInventorySystem:
             if subcategory_summary and 'error' not in subcategory_summary:
                 status['subcategory_analysis']['subcategories_count'] = subcategory_summary['total_subcategories']
         
-        # Обновляем общий прогресс (теперь 6 этапов вместо 4)
+        # Обновляем общий прогресс (теперь 5 этапов вместо 4)
         completed_steps = sum([
             status['abc_analysis']['analyzed'],
             status['sales_analysis']['ads_calculated'],
             status['min_stock_analysis']['calculated'],
-            status['max_stock_analysis']['calculated'], 
             status['stock_analysis']['compared'],
-            status['subcategory_analysis']['analyzed']  
+            status['subcategory_analysis']['analyzed']  # НОВЫЙ этап
         ])
         
         status['overall'] = {
-        'completed_steps': completed_steps,
-        'total_steps': 6,  # Увеличиваем до 6
-        'progress_percentage': (completed_steps / 6) * 100,
-        'ready_for_export': completed_steps >= 3  # Минимум ADS + MIN + MAX
+            'completed_steps': completed_steps,
+            'total_steps': 5,  # Увеличиваем до 5
+            'progress_percentage': (completed_steps / 5) * 100,
+            'ready_for_export': completed_steps >= 2
         }
         
         return status
@@ -1903,50 +1545,7 @@ class ModularInventorySystem:
                 # Минимальные запасы
                 if self.calculated_min_stock is not None:
                     self.calculated_min_stock.to_excel(writer, sheet_name='Минимальные_запасы', index=False)
-                # Максимальные запасы
-                if hasattr(self, 'calculated_max_stock') and self.calculated_max_stock is not None:
-                    self.calculated_max_stock.to_excel(writer, sheet_name='Максимальные_запасы', index=False)
                 
-                # Анализ эффективности остатков (если есть сравнение с MAX)
-                if hasattr(self, 'stock_comparison_with_max') and self.stock_comparison_with_max is not None:
-                    # Полное сравнение с MIN/MAX
-                    self.stock_comparison_with_max.to_excel(writer, sheet_name='Сравнение_MIN_MAX', index=False)
-                    
-                    # Товары с переизбытком
-                    excess_items = self.stock_comparison_with_max[
-                        self.stock_comparison_with_max['max_stock_status'] == 'ПЕРЕИЗБЫТОК'
-                    ]
-                    if not excess_items.empty:
-                        excess_items.to_excel(writer, sheet_name='Товары_с_переизбытком', index=False)
-                    
-                    # Оптимальные остатки
-                    optimal_items = self.stock_comparison_with_max[
-                        self.stock_comparison_with_max['max_stock_status'] == 'ОПТИМАЛЬНЫЙ'
-                    ]
-                    if not optimal_items.empty:
-                        optimal_items.to_excel(writer, sheet_name='Оптимальные_остатки', index=False)
-                    
-                    # Сводка эффективности
-                    if hasattr(self, 'get_stock_efficiency_analysis'):
-                        efficiency = self.get_stock_efficiency_analysis()
-                        if 'error' not in efficiency:
-                            efficiency_df = pd.DataFrame([{
-                                'Метрика': 'Оптимальные остатки (%)',
-                                'Значение': efficiency['efficiency_metrics']['optimal_percentage']
-                            }, {
-                                'Метрика': 'Переизбыток (%)',
-                                'Значение': efficiency['efficiency_metrics']['excess_percentage']
-                            }, {
-                                'Метрика': 'Недостаток (%)',
-                                'Значение': efficiency['efficiency_metrics']['deficit_percentage']
-                            }, {
-                                'Метрика': 'Товаров с переизбытком',
-                                'Значение': efficiency['financial_impact']['excess_items_count']
-                            }, {
-                                'Метрика': 'Общий избыток (единиц)',
-                                'Значение': efficiency['financial_impact']['total_excess_units']
-                            }])
-                            efficiency_df.to_excel(writer, sheet_name='Сводка_эффективности', index=False)
                 # Текущие остатки
                 if self.stock_data is not None:
                     stock_export = self.stock_data[['номенклатура', 'total_current_stock']].copy()
@@ -2351,28 +1950,10 @@ class ModularInventorySystem:
         
         if not status['min_stock_analysis']['calculated']:
             recommendations.append("Рассчитайте минимальные запасы на основе ADS")
-
-        if not status['max_stock_analysis']['calculated'] and status['min_stock_analysis']['calculated']:
-            recommendations.append("Настройте максимальные остатки для контроля переизбытка товаров")
-
+        
         if not status['stock_analysis']['compared']:
             recommendations.append("Загрузите текущие остатки для сравнения с минимальными запасами")
         
-        # Анализ эффективности MAX остатков
-        if hasattr(self, 'stock_comparison_with_max') and self.stock_comparison_with_max is not None:
-            if hasattr(self, 'get_stock_efficiency_analysis'):
-                efficiency = self.get_stock_efficiency_analysis()
-                if 'error' not in efficiency:
-                    excess_pct = efficiency['efficiency_metrics']['excess_percentage']
-                    optimal_pct = efficiency['efficiency_metrics']['optimal_percentage']
-                    
-                    if excess_pct > 15:
-                        recommendations.append(f"Критический переизбыток: {excess_pct:.1f}% товаров превышают MAX остатки")
-                    
-                    if optimal_pct < 50:
-                        recommendations.append(f"Низкая эффективность остатков: только {optimal_pct:.1f}% товаров в оптимальной зоне")
-
-
         # Анализируем результаты сравнения
         if self.stock_comparison is not None:
             critical_count = len(self.stock_comparison[self.stock_comparison['status'] == 'КРИТИЧНО'])

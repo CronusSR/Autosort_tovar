@@ -55,10 +55,7 @@ def compare_stock_vs_min_with_prices(system) -> dict:
         # Добавляем цены
         if price_df is not None:
             comparison = pd.merge(comparison, price_df, on='номенклатура', how='left')
-            if 'last_purchase_price' in comparison.columns:
-                comparison['last_purchase_price'] = comparison['last_purchase_price'].fillna(0)
-            else:
-                comparison['last_purchase_price'] = 0
+            comparison['last_purchase_price'] = comparison['last_purchase_price'].fillna(0)
             print(f"✅ Цены добавлены к {len(comparison)} товарам")
         else:
             comparison['last_purchase_price'] = 0

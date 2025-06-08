@@ -16,97 +16,8 @@ from integration_patch import add_multiple_files_interface_to_existing
 import io
 import time
 import warnings
-import sys
-import os
 from subcategory_abc import create_subcategory_abc_interface
 
-try:
-    from complete_system_fixes import (
-        SystemFixer, 
-        create_fixed_ads_page, 
-        create_fixed_comparison_page, 
-        create_fixed_main_function
-    )
-    COMPLETE_FIXES_AVAILABLE = True
-except ImportError:
-    COMPLETE_FIXES_AVAILABLE = False
-    print("⚠️ Полные исправления недоступны")
-
-# Диагностика импорта
-print("🔍 ДИАГНОСТИКА ИМПОРТА MAX_STOCK_FEATURE:")
-print(f"📁 Текущая папка: {os.getcwd()}")
-print(f"📁 Python path: {sys.path[:3]}...")  # Первые 3 пути
-
-# Проверяем наличие файла
-max_stock_file = "max_stock_feature.py"
-file_exists = os.path.exists(max_stock_file)
-print(f"📄 Файл {max_stock_file} существует: {'✅' if file_exists else '❌'}")
-
-if file_exists:
-    file_size = os.path.getsize(max_stock_file)
-    print(f"📊 Размер файла: {file_size} байт")
-
-# ИСПРАВЛЕННЫЙ ИМПОРТ с детальной диагностикой:
-MAX_STOCK_AVAILABLE = False
-
-try:
-    # Метод 1: Прямой импорт
-    print("🔄 Попытка 1: Прямой импорт...")
-    from max_stock_feature import (
-        add_max_stock_functionality_to_system,
-        max_stock_settings_page, 
-        max_stock_analysis_page
-    )
-    MAX_STOCK_AVAILABLE = True
-    print("✅ Метод 1: Успешно!")
-    
-except ImportError as e1:
-    print(f"❌ Метод 1 неудачен: {e1}")
-    
-    try:
-        # Метод 2: Добавляем текущую папку в path
-        print("🔄 Попытка 2: Добавление в sys.path...")
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        if current_dir not in sys.path:
-            sys.path.insert(0, current_dir)
-        
-        from max_stock_feature import (
-            add_max_stock_functionality_to_system,
-            max_stock_settings_page, 
-            max_stock_analysis_page
-        )
-        MAX_STOCK_AVAILABLE = True
-        print("✅ Метод 2: Успешно!")
-        
-    except ImportError as e2:
-        print(f"❌ Метод 2 неудачен: {e2}")
-        
-        try:
-            # Метод 3: Импорт через importlib
-            print("🔄 Попытка 3: Через importlib...")
-            import importlib.util
-            
-            spec = importlib.util.spec_from_file_location("max_stock_feature", "max_stock_feature.py")
-            if spec and spec.loader:
-                max_stock_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(max_stock_module)
-                
-                # Извлекаем нужные функции
-                add_max_stock_functionality_to_system = max_stock_module.add_max_stock_functionality_to_system
-                max_stock_settings_page = max_stock_module.max_stock_settings_page
-                max_stock_analysis_page = max_stock_module.max_stock_analysis_page
-                
-                MAX_STOCK_AVAILABLE = True
-                print("✅ Метод 3: Успешно!")
-            else:
-                raise ImportError("Не удалось создать spec для модуля")
-                
-        except Exception as e3:
-            print(f"❌ Метод 3 неудачен: {e3}")
-            
-            # Метод 4: Встроенный код (fallback)
-            print("🔄 Попытка 4: Встроенный код...")
-            MAX_STOCK_AVAILABLE = "embedded"
 try:
     from price_integration_fix import apply_price_fixes_to_system, quick_price_check
     from streamlit_deficit_money_update import (
@@ -370,57 +281,48 @@ def show_system_status(system):
     """Отображение статуса системы"""
     status = system.get_system_status()
     
-    # ИЗМЕНЯЕМ НА 6 КОЛОНОК (было 5)
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         abc_status = "✅" if status['abc_analysis']['analyzed'] else "❌"
         st.metric(
-            "ABC", 
-            f"{abc_status} {status['abc_analysis']['items_count']}"
+            "ABC анализ", 
+            f"{abc_status} {status['abc_analysis']['items_count']} товаров"
         )
     
     with col2:
         ads_status = "✅" if status['sales_analysis']['ads_calculated'] else "❌"
         st.metric(
-            "ADS", 
-            f"{ads_status} {status['sales_analysis']['items_count']}"
+            "ADS расчет", 
+            f"{ads_status} {status['sales_analysis']['items_count']} товаров"
         )
     
     with col3:
         min_status = "✅" if status['min_stock_analysis']['calculated'] else "❌"
         st.metric(
-            "MIN", 
-            f"{min_status} {status['min_stock_analysis']['items_count']}"
+            "MIN запасы", 
+            f"{min_status} {status['min_stock_analysis']['items_count']} товаров"
         )
     
-    # НОВАЯ КОЛОНКА ДЛЯ MAX ОСТАТКОВ:
     with col4:
-        max_status = "✅" if status['max_stock_analysis']['calculated'] else "❌"
+        stock_status = "✅" if status['stock_analysis']['compared'] else "❌"
         st.metric(
-            "MAX", 
-            f"{max_status} {status['max_stock_analysis']['items_count']}"
+            "Сравнение", 
+            f"{stock_status} {status['stock_analysis']['items_count']} товаров"
         )
 
     with col5:
-        stock_status = "✅" if status['stock_analysis']['compared'] else "❌"
-        st.metric(
-            "Остатки", 
-            f"{stock_status} {status['stock_analysis']['items_count']}"
-        )
-
-    with col6:
         subcat_status = "✅" if status['subcategory_analysis']['analyzed'] else "❌"
         subcat_count = status['subcategory_analysis']['subcategories_count']
         st.metric(
-            "Подкат.", 
-            f"{subcat_status} {subcat_count}"
+            "Подкатегории", 
+            f"{subcat_status} {subcat_count} подкат."
         )
     
-    # Прогресс-бар (теперь из 6 этапов)
+    # Прогресс-бар
     progress = status['overall']['progress_percentage']
     st.progress(progress / 100)
-    st.write(f"**Прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/6)")
+    st.write(f"**Общий прогресс:** {progress:.0f}% ({status['overall']['completed_steps']}/5 этапов)")
 
 def abc_analysis_page_updated(system):
     """Обновленная страница ABC анализа с поддержкой товаров с нулевыми продажами"""
@@ -800,65 +702,8 @@ def ads_calculation_page_updated(system):
         
         # Топ товары по ADS
         st.subheader("🏆 Топ товары по ADS")
-    
-        # Проверяем источник данных
-        if hasattr(system, 'sales_data') and system.sales_data is not None:
-            print("🔍 Используем данные из sales_data (исходный файл)")
-            
-            # Фильтруем товары с положительным ADS из исходного файла
-            source_data = system.sales_data
-            positive_ads_data = source_data[source_data['ads'] > 0]
-            
-            if len(positive_ads_data) == 0:
-                st.warning("⚠️ В загруженном файле нет товаров с положительным ADS")
-            else:
-                # Берем топ-10 из исходного файла
-                top_ads = positive_ads_data.nlargest(10, 'ads')
-                
-                st.info(f"📊 Показаны топ-{len(top_ads)} товаров из загруженного файла (всего с ADS > 0: {len(positive_ads_data)})")
-                
-                fig_ads = px.bar(
-                    top_ads,
-                    x='ads',
-                    y='номенклатура',
-                    orientation='h',
-                    title=f'Топ-{len(top_ads)} товаров по ADS (из загруженного файла)',
-                    labels={'ads': 'Среднедневные продажи', 'номенклатура': 'Товар'}
-                )
-                fig_ads.update_layout(height=600)
-                st.plotly_chart(fig_ads, use_container_width=True)
-                
-                # Показываем статистику
-                st.write(f"**Статистика из файла:**")
-                st.write(f"- Всего товаров в файле: {len(source_data)}")
-                st.write(f"- С положительным ADS: {len(positive_ads_data)}")
-                st.write(f"- Средний ADS файла: {positive_ads_data['ads'].mean():.4f}")
-                st.write(f"- Общий ADS файла: {positive_ads_data['ads'].sum():.2f}")
-        
-        elif hasattr(system, 'calculated_ads') and system.calculated_ads is not None:
-            print("⚠️ Используем calculated_ads (может содержать данные не из файла)")
-            
-            # Фильтруем только товары с положительным ADS
-            ads_data = system.calculated_ads
-            top_ads = ads_data[ads_data['ads'] > 0].nlargest(10, 'ads')
-            
-            if len(top_ads) == 0:
-                st.warning("⚠️ Нет товаров с положительным ADS")
-            else:
-                st.warning("⚠️ Показаны данные из calculated_ads (могут содержать товары не из файла)")
-                
-                fig_ads = px.bar(
-                    top_ads,
-                    x='ads',
-                    y='номенклатура',
-                    orientation='h',
-                    title='Топ-10 товаров по ADS (из calculated_ads)',
-                    labels={'ads': 'Среднедневные продажи', 'номенклатура': 'Товар'}
-                )
-                st.plotly_chart(fig_ads, use_container_width=True)
-        
-        else:
-            st.error("❌ Нет данных ADS для отображения")
+        # Фильтруем только товары с положительным ADS из загруженного файла
+        top_ads = ads_data[ads_data['ads'] > 0].nlargest(10, 'ads')
 
         # Дополнительная проверка на валидность данных
         if len(top_ads) == 0:
@@ -1219,8 +1064,8 @@ def min_stock_calculation_page(system):
             display_cols = ['номенклатура', 'ads', 'min_stock_base', 'transit_consumption', 'min_stock_total', 'priority']
             st.dataframe(min_stock_data[display_cols], use_container_width=True)
 
-def stock_comparison_page_safe(system):
-    """ИСПРАВЛЕННАЯ страница сравнения остатков - безопасная для отсутствующих цен"""
+def stock_comparison_page(system):
+    """Страница сравнения остатков"""
     st.header("⚖️ Сравнение остатков с минимальными запасами")
     
     status = system.get_system_status()
@@ -1228,7 +1073,7 @@ def stock_comparison_page_safe(system):
     if not status['min_stock_analysis']['calculated']:
         st.warning("⚠️ Сначала необходимо рассчитать минимальные запасы")
         if st.button("📋 Перейти к расчету MIN запасов"):
-            st.info("Переключитесь на вкладку 'MIN запасы'")
+            st.switch_page("MIN запасы")
         return
     
     # Загрузка файла остатков
@@ -1286,11 +1131,8 @@ def stock_comparison_page_safe(system):
     with col4:
         total_deficit = comparison_data['stock_deficit'].sum()
         st.metric("Общий дефицит", f"{total_deficit:,.0f}")
-    
-    # ИСПРАВЛЕНИЕ: Безопасная проверка ценовых данных
-    has_price_data = ('last_purchase_price' in comparison_data.columns and 
-                     'stock_deficit_money' in comparison_data.columns and
-                     comparison_data['stock_deficit_money'].sum() > 0)
+    # Проверяем наличие ценовых данных
+    has_price_data = 'last_purchase_price' in comparison_data.columns and 'stock_deficit_money' in comparison_data.columns
 
     if has_price_data:
         st.subheader("💰 Денежные показатели")
@@ -1302,7 +1144,7 @@ def stock_comparison_page_safe(system):
             st.metric("Общий дефицит (₽)", f"{total_deficit_money:,.2f}")
         
         with col2:
-            total_recommended_order_money = comparison_data.get('recommended_order_money', pd.Series([0])).sum()
+            total_recommended_order_money = comparison_data['recommended_order_money'].sum()
             st.metric("К заказу (₽)", f"{total_recommended_order_money:,.2f}")
         
         with col3:
@@ -1316,10 +1158,6 @@ def stock_comparison_page_safe(system):
                 st.metric("Средняя цена", f"{avg_price:,.2f} ₽")
             else:
                 st.metric("Средняя цена", "Нет данных")
-        
-        st.info("✅ Ценовые данные найдены и обработаны")
-    else:
-        st.info("ℹ️ Ценовые данные отсутствуют. Анализ выполнен только по количеству.")
 
     # Визуализации
     visualizations = system.create_visualizations()
@@ -1374,26 +1212,10 @@ def stock_comparison_page_safe(system):
         'stock_deficit', 'current_stock_days', 'status', 'order_priority', 'recommended_order'
     ]
     
-    # Добавляем денежные колонки если есть данные
-    if has_price_data:
-        display_columns.extend(['last_purchase_price', 'stock_deficit_money', 'recommended_order_money'])
-        
-        column_config = {
-            'номенклатура': 'Товар',
-            'ads': 'ADS',
-            'min_stock_total': 'MIN запас',
-            'total_current_stock': 'Текущий остаток',
-            'stock_deficit': 'Дефицит',
-            'current_stock_days': 'Дни остатка',
-            'status': 'Статус',
-            'order_priority': 'Приоритет',
-            'recommended_order': 'Рекомендуемый заказ',
-            'last_purchase_price': 'Цена (₽)',
-            'stock_deficit_money': 'Дефицит (₽)', 
-            'recommended_order_money': 'К заказу (₽)'
-        }
-    else:
-        column_config = {
+    st.dataframe(
+        filtered_data[display_columns], 
+        use_container_width=True,
+        column_config={
             'номенклатура': 'Товар',
             'ads': 'ADS',
             'min_stock_total': 'MIN запас',
@@ -1404,18 +1226,20 @@ def stock_comparison_page_safe(system):
             'order_priority': 'Приоритет',
             'recommended_order': 'Рекомендуемый заказ'
         }
-    
-    # Проверяем какие колонки реально существуют
-    available_columns = [col for col in display_columns if col in filtered_data.columns]
-    
-    st.dataframe(
-        filtered_data[available_columns], 
-        use_container_width=True,
-        column_config=column_config
     )
+    # Добавляем денежные колонки если есть данные
+    if has_price_data:
+        display_columns.extend(['last_purchase_price', 'stock_deficit_money', 'recommended_order_money'])
+        column_config.update({
+            'last_purchase_price': 'Цена (₽)',
+            'stock_deficit_money': 'Дефицит (₽)', 
+            'recommended_order_money': 'К заказу (₽)'
+        })
+    
     
     if len(filtered_data) != len(comparison_data):
         st.info(f"Показано {len(filtered_data)} из {len(comparison_data)} товаров")
+
 def export_page(system):
     """Страница экспорта результатов"""
     st.header("📤 Экспорт результатов")
@@ -1558,7 +1382,7 @@ def settings_page(system):
     # Текущие параметры
     current_params = system.default_params
     
-    st.subheader("📋 Параметры расчета MIN запасов")
+    st.subheader("📋 Параметры расчета")
     
     with st.form("settings_form"):
         ip_days = st.slider(
@@ -1596,35 +1420,6 @@ def settings_page(system):
             )
             st.success("✅ Настройки сохранены!")
             st.rerun()
-    
-    # НОВАЯ СЕКЦИЯ: MAX ОСТАТКИ
-    st.subheader("📈 Настройки максимальных остатков")
-    
-    if hasattr(system, 'stock_limits_config'):
-        current_limits = getattr(system, 'stock_limits_config', {})
-        
-        if current_limits:
-            st.success(f"""
-            ✅ **MAX остатки настроены:**
-            - Типов точек: {len(current_limits)}
-            - Функционал активен: {'✅' if hasattr(system, 'calculated_max_stock') else '❌'}
-            """)
-            
-            if st.button("⚙️ Перейти к настройкам MAX остатков"):
-                st.info("💡 Переключитесь на вкладку 'MAX остатки - настройки' в меню слева")
-        else:
-            st.warning("⚠️ MAX остатки не настроены")
-    else:
-        st.info("📈 Функционал MAX остатков недоступен")
-        
-        if MAX_STOCK_AVAILABLE and st.button("🚀 Активировать MAX остатки"):
-            try:
-                add_max_stock_functionality_to_system(system)
-                st.success("✅ Функционал MAX остатков активирован!")
-                st.info("💡 Теперь можете настроить параметры на странице 'MAX остатки - настройки'")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Ошибка активации: {str(e)}")
     st.subheader("🔤📊 Настройки анализа подкатегорий")
     
     status = system.get_system_status()
@@ -1736,17 +1531,17 @@ def main():
     # Инициализация системы
     system = init_system()
 
-    # НОВОЕ: Применяем интеграцию MAX остатков (если доступна)
-    if MAX_STOCK_AVAILABLE:
-        add_max_stock_functionality_to_system(system)
-
     # НОВОЕ: Применяем интеграцию цен (если доступна)
     if PRICE_INTEGRATION_AVAILABLE:
         complete_price_integration_setup(system)
+        
+        # Показываем статус в sidebar
         show_price_integration_status_in_streamlit(system)
 
     if PRICE_FEATURES_AVAILABLE:
         apply_price_fixes_to_system(system)
+        
+        # Добавляем статус цен в sidebar
         show_money_integration_status(system)
         integration_instructions()
     
@@ -1774,8 +1569,6 @@ def main():
                 "🔤 ABC анализ",
                 "📊 ADS расчет", 
                 "📋 MIN запасы",
-                "📈 MAX остатки - настройки",    # НОВАЯ СТРАНИЦА
-                "📊 MAX остатки - анализ",       # НОВАЯ СТРАНИЦА
                 "⚖️ Сравнение остатков",
                 "🔤📊 ABC подкатегории",
                 "📤 Экспорт результатов",
@@ -1788,7 +1581,6 @@ def main():
         # Быстрые действия
         st.subheader("⚡ Быстрые действия")
         
-        # ИСПРАВЛЕНИЕ: Получаем статус ЗДЕСЬ, где он нужен
         status = system.get_system_status()
         
         if not status['abc_analysis']['analyzed']:
@@ -1799,45 +1591,32 @@ def main():
             st.button("📊 Рассчитать ADS", key="quick_ads")
         elif not status['min_stock_analysis']['calculated']:
             st.button("📋 MIN запасы", key="quick_min")
-        elif not status['max_stock_analysis']['calculated'] and status['min_stock_analysis']['calculated']:
-            st.button("📈 Настроить MAX", key="quick_max")
         elif not status['stock_analysis']['compared']:
             st.button("⚖️ Сравнить остатки", key="quick_compare")
         else:
             st.button("📤 Экспорт", key="quick_export")
     
     # Основной контент в зависимости от выбранной страницы
+    # ТЕПЕРЬ переменная page уже определена выше
     if page == "🔤 ABC анализ":
         abc_analysis_page_updated(system)
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
         if PRICE_FEATURES_AVAILABLE:
-            add_price_info_to_ads_page(system)
+            add_price_info_to_ads_page(system)  # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ЦЕНАХ
     elif page == "📋 MIN запасы":
         min_stock_calculation_page(system)
-    elif page == "📈 MAX остатки - настройки":
-        if MAX_STOCK_AVAILABLE:
-            max_stock_settings_page(system)
-        else:
-            st.error("❌ Модуль максимальных остатков недоступен")
-            st.info("Убедитесь что файл max_stock_feature.py находится в папке проекта")
-    elif page == "📊 MAX остатки - анализ":
-        if MAX_STOCK_AVAILABLE:
-            max_stock_analysis_page(system)
-        else:
-            st.error("❌ Модуль максимальных остатков недоступен")
-            st.info("Убедитесь что файл max_stock_feature.py находится в папке проекта")
     elif page == "⚖️ Сравнение остатков":
         if PRICE_FEATURES_AVAILABLE:
-            stock_comparison_page_with_money(system)
+            stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
         else:
-            stock_comparison_page_safe(system)
+            stock_comparison_page(system)  # Старая функция
     elif page == "🔤📊 ABC подкатегории":  
         subcategory_abc_analysis_page(system)
     elif page == "📤 Экспорт результатов":
         export_page(system)
         if PRICE_FEATURES_AVAILABLE:
-            update_export_page_with_money(system)
+            update_export_page_with_money(system)  # ДОБАВЛЯЕМ ДЕНЕЖНЫЙ ЭКСПОРТ
     elif page == "⚙️ Настройки":
         settings_page(system)
     
@@ -1853,21 +1632,20 @@ def main():
             2. 🔤📊 ABC анализ по подкатегориям (детализация)
             3. 📊 Расчет ADS из файла продаж
             4. 📋 Расчет минимальных запасов
-            5. 📈 Настройка максимальных остатков (новое!)
-            6. ⚖️ Загрузка остатков и сравнение
-            7. 📤 Экспорт результатов
+            5. ⚖️ Загрузка остатков и сравнение
+            6. 📤 Экспорт результатов
             """)
     
     with col2:
-        # ИСПРАВЛЕНИЕ: Получаем статус заново для футера
-        footer_status = system.get_system_status()
-        progress = footer_status['overall']['progress_percentage']
+        status = system.get_system_status()  # Получаем статус заново
+        progress = status['overall']['progress_percentage']
         if progress == 100:
             st.success("✅ Все этапы завершены!")
         else:
             st.info(f"📊 Прогресс: {progress:.0f}%")
     
     with col3:
-        st.caption(f"Система v3.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+        st.caption(f"Система v2.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+
 if __name__ == "__main__":
     main()

@@ -1649,6 +1649,7 @@ def main():
                 "🔤 ABC анализ",
                 "📊 ADS расчет", 
                 "📋 MIN запасы",
+                "📦 MAX остатки",
                 "⚖️ Сравнение остатков",
                 "🔤📊 ABC подкатегории",
                 "📤 Экспорт результатов",
@@ -1686,6 +1687,8 @@ def main():
             add_price_info_to_ads_page(system)  # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ЦЕНАХ
     elif page == "📋 MIN запасы":
         min_stock_calculation_page(system)
+    elif page == "📦 MAX остатки":
+        max_stock_page(system)
     elif page == "⚖️ Сравнение остатков":
         if PRICE_FEATURES_AVAILABLE:
             stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
@@ -1792,7 +1795,13 @@ def max_stock_page(system):
                 st.success("✅ Сравнение выполнено!")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Недостаток", f"{result['shortage_items']} товаров")
+                    shortage_count = (
+                        result.get('shortage_items') or 
+                        result.get('critical_items') or 
+                        result.get('deficit_items') or 
+                        0
+                    )
+                    st.metric("Недостаток", f"{shortage_count} товаров")
                 with col2:
                     st.metric("Избыток", f"{result['excess_items']} товаров")
                 with col3:

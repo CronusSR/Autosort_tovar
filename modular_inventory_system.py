@@ -13,7 +13,7 @@ import warnings
 import plotly.express as px
 import plotly.graph_objects as go
 from subcategory_abc import SubcategoryABCAnalyzer
-from max_stock_calculator import add_max_stock_methods_to_system, MaxStockCalculator
+
 
 
 warnings.filterwarnings('ignore')
@@ -50,11 +50,13 @@ class ModularInventorySystem:
             'safety_factor': 1.0
         }
         try:
-            add_max_stock_methods_to_system(self)
-            self._max_stock_integrated = True
-        except:
-            self._max_stock_integrated = False
-            
+            from new_max_stock_calculator import replace_max_stock_functionality
+            replace_max_stock_functionality(self)
+            self._new_max_stock_ready = True
+        except Exception as e:
+            print(f"⚠️ Ошибка инициализации новых MAX остатков: {e}")
+            self._new_max_stock_ready = False
+
     def perform_subcategory_abc_analysis(self) -> Dict:
         """
         Выполнение ABC анализа по подкатегориям

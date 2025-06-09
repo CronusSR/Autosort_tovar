@@ -162,41 +162,65 @@ def max_stock_page(system):
                         st.metric("Общий MAX запас", f"{result['total_avg_max_stock']:,.0f}")
                     with col3:
                         st.metric("Средний MAX на товар", f"{result['avg_max_per_item']:.1f}")
-                    
-                    # ИСПРАВЛЕНО: детальная сводка в Streamlit
-                    if st.button("📊 Показать детальную сводку"):
-                        summary = system.get_new_max_stock_summary()
-                        if 'error' not in summary:
-                            st.write("**📊 Детальная сводка MAX остатков:**")
-                            
-                            # Общие параметры
-                            st.write(f"**Общие параметры:**")
-                            st.write(f"- Товаров: {summary['total_items']}")
-                            st.write(f"- Средние дни MIN: {summary['avg_parameters']['min_days']:.1f}")
-                            st.write(f"- Средние дни MAX: {summary['avg_parameters']['max_days']:.1f}")
-                            
-                            # Общие итоги
-                            st.write(f"**Общие итоги:**")
-                            st.write(f"- Общий MIN запас: {summary['totals']['avg_min_stock']:,.0f}")
-                            st.write(f"- Общий MAX запас: {summary['totals']['avg_max_stock']:,.0f}")
-                            st.write(f"- Рабочий диапазон: {summary['totals']['avg_range']:,.0f}")
-                            
-                            # По типам точек
-                            if summary['per_location']:
-                                st.write(f"**По типам точек:**")
-                                for loc_type, data in summary['per_location'].items():
-                                    with st.expander(f"🏪 {loc_type.upper()}"):
-                                        st.write(f"- MIN дни: {data['min_days']}")
-                                        st.write(f"- MAX дни: {data['max_days']}")
-                                        st.write(f"- Общий MIN запас: {data['total_min_stock']:,.0f}")
-                                        st.write(f"- Общий MAX запас: {data['total_max_stock']:,.0f}")
-                                        st.write(f"- Средний MIN: {data['avg_min_stock']:.1f}")
-                                        st.write(f"- Средний MAX: {data['avg_max_stock']:.1f}")
-                        else:
-                            st.error(f"❌ {summary['error']}")
                             
                 else:
                     st.error(f"❌ {result['error']}")
+    
+    # ВЫНЕСЛИ КНОПКУ ДЕТАЛЬНОЙ СВОДКИ ОТДЕЛЬНО
+    st.subheader("📊 Анализ рассчитанных остатков")
+    
+    # Проверяем что остатки рассчитаны
+    if hasattr(system, 'new_calculated_max_stock') and system.new_calculated_max_stock is not None:
+        st.info("✅ Новые максимальные остатки рассчитаны и готовы для анализа")
+        
+        if st.button("📊 Показать детальную сводку"):
+            summary = system.get_new_max_stock_summary()
+            if 'error' not in summary:
+                st.write("**📊 Детальная сводка MAX остатков:**")
+                
+                # Общие параметры
+                st.write(f"**Общие параметры:**")
+                st.write(f"- Товаров: {summary['total_items']}")
+                st.write(f"- Средние дни MIN: {summary['avg_parameters']['min_days']:.1f}")
+                st.write(f"- Средние дни MAX: {summary['avg_parameters']['max_days']:.1f}")
+                
+                # Общие итоги
+                st.write(f"**Общие итоги:**")
+                st.write(f"- Общий MIN запас: {summary['totals']['avg_min_stock']:,.0f}")
+                st.write(f"- Общий MAX запас: {summary['totals']['avg_max_stock']:,.0f}")
+                st.write(f"- Рабочий диапазон: {summary['totals']['avg_range']:,.0f}")
+                
+                # По типам точек
+                if summary['per_location']:
+                    st.write(f"**По типам точек:**")
+                    for loc_type, data in summary['per_location'].items():
+                        with st.expander(f"🏪 {loc_type.upper()}"):
+                            st.write(f"- MIN дни: {data['min_days']}")
+                            st.write(f"- MAX дни: {data['max_days']}")
+                            st.write(f"- Общий MIN запас: {data['total_min_stock']:,.0f}")
+                            st.write(f"- Общий MAX запас: {data['total_max_stock']:,.0f}")
+                            st.write(f"- Средний MIN: {data['avg_min_stock']:.1f}")
+                            st.write(f"- Средний MAX: {data['avg_max_stock']:.1f}")
+            else:
+                st.error(f"❌ {summary['error']}")
+        
+        # Показать сами данные в таблице
+        if st.button("📋 Показать таблицу MAX остатков"):
+            st.write("**📋 Таблица рассчитанных максимальных остатков:**")
+            display_cols = ['номенклатура', 'ads', 'avg_min_stock', 'avg_max_stock', 'avg_range']
+            
+            # Фильтруем только нужные колонки, которые есть в данных
+            available_cols = [col for col in display_cols if col in system.new_calculated_max_stock.columns]
+            
+            if available_cols:
+                st.dataframe(
+                    system.new_calculated_max_stock[available_cols].head(20),
+                    use_container_width=True
+                )
+            else:
+                st.error("❌ Не найдены ожидаемые колонки в данных")
+    else:
+        st.warning("⚠️ Новые максимальные остатки не рассчитаны. Нажмите кнопку 'Рассчитать НОВЫЕ MAX остатки' выше.")
     
     st.divider()
     
@@ -256,7 +280,6 @@ def max_stock_page(system):
         st.write(f"- new_calculated_max_stock: {hasattr(system, 'new_calculated_max_stock')}")
         st.write(f"- calculated_ads: {hasattr(system, 'calculated_ads') and system.calculated_ads is not None}")
         st.write(f"- stock_data: {hasattr(system, 'stock_data') and system.stock_data is not None}")
-        
 def subcategory_abc_analysis_page(system):
     """Страница ABC анализа по подкатегориям"""
     st.header("🔤📊 ABC анализ по подкатегориям")
@@ -1818,10 +1841,10 @@ def main():
         st.caption(f"Система v2.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
 
 def max_stock_page(system):
-    """Страница максимальных остатков"""
-    st.header("📦 Максимальные остатки")
+    """Окончательно исправленная страница для работы с новыми максимальными остатками"""
+    st.header("📦 Новые максимальные остатки")
     
-    # Проверка интеграции
+    # Проверка инициализации НОВЫХ максимальных остатков
     if not hasattr(system, '_new_max_stock_ready') or not system._new_max_stock_ready:
         st.error("❌ Новые максимальные остатки не инициализированы")
         if st.button("🔄 Переинициализировать"):
@@ -1833,17 +1856,35 @@ def max_stock_page(system):
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Ошибка: {e}")
+        return
     
-    # Настройки
+    # Настройки параметров
     st.subheader("⚙️ Настройки параметров")
-
+    
     col1, col2 = st.columns(2)
     with col1:
         point_type = st.selectbox("Тип точки:", ['хабы', 'склады', 'магазины'])
     with col2:
-        st.write("**Текущие настройки:**")
+        # Инициализация session_state для показа настроек
+        if 'show_settings' not in st.session_state:
+            st.session_state.show_settings = False
+            
         if st.button("📋 Показать настройки"):
-            system.show_new_max_stock_settings()
+            st.session_state.show_settings = not st.session_state.show_settings
+        
+        # Показ настроек если флаг активен
+        if st.session_state.show_settings:
+            if hasattr(system, 'new_max_stock_calculator'):
+                settings = system.new_max_stock_calculator.default_settings
+                
+                st.write("**📋 Текущие настройки максимальных остатков:**")
+                for ptype, config in settings.items():
+                    st.write(f"**🏪 {ptype.upper()}:** {config.get('description', '')}")
+                    st.write(f"   - MIN: {config['min_days']} дней")
+                    st.write(f"   - MAX: {config['max_days']} дней")
+                    st.write("---")
+            else:
+                st.warning("Калькулятор не инициализирован")
 
     col3, col4 = st.columns(2)
     with col3:
@@ -1852,19 +1893,22 @@ def max_stock_page(system):
         max_days = st.number_input("Дни MAX запаса:", min_value=min_days, max_value=365, value=25)
 
     if st.button("💾 Обновить настройки"):
-        system.update_new_max_stock_settings(point_type, min_days, max_days)
-        st.success(f"✅ Настройки обновлены: {point_type} = MIN:{min_days}д, MAX:{max_days}д")
+        try:
+            system.update_new_max_stock_settings(point_type, min_days, max_days)
+            st.success(f"✅ Настройки обновлены: {point_type} = MIN:{min_days}д, MAX:{max_days}д")
+        except Exception as e:
+            st.error(f"❌ Ошибка обновления настроек: {e}")
 
     st.divider()
 
-    # РАСЧЕТ
+    # РАСЧЕТ новых максимальных остатков
     st.subheader("📊 Расчет новых максимальных остатков")
 
-    if st.button("🔄 Рассчитать MAX остатки"):
+    if st.button("🔄 Рассчитать НОВЫЕ MAX остатки"):
         if not hasattr(system, 'calculated_ads') or system.calculated_ads is None:
             st.error("❌ Сначала рассчитайте ADS")
         else:
-            with st.spinner("Расчет максимальных остатков..."):
+            with st.spinner("Расчет новых максимальных остатков..."):
                 result = system.calculate_new_max_stock()
                 
                 if result['success']:
@@ -1878,44 +1922,178 @@ def max_stock_page(system):
                     with col3:
                         st.metric("Средний MAX на товар", f"{result['avg_max_per_item']:.1f}")
                     
-                    # Показать сводку
-                    if st.button("📊 Показать детальную сводку"):
-                        summary = system.get_new_max_stock_summary()
-                        if 'error' not in summary:
-                            st.json(summary)
-                        else:
-                            st.error(summary['error'])
+                    # Устанавливаем флаг что остатки рассчитаны
+                    st.session_state.max_stock_calculated = True
                             
                 else:
                     st.error(f"❌ {result['error']}")
     
-    # Сравнение
+    st.divider()
+    
+    # АНАЛИЗ рассчитанных остатков - всегда показываем если остатки есть
+    st.subheader("📊 Анализ рассчитанных остатков")
+    
+    # Проверяем что остатки рассчитаны
+    if hasattr(system, 'new_calculated_max_stock') and system.new_calculated_max_stock is not None:
+        st.info("✅ Новые максимальные остатки рассчитаны и готовы для анализа")
+        
+        # Инициализация session_state для показа сводки
+        if 'show_summary' not in st.session_state:
+            st.session_state.show_summary = False
+        if 'show_table' not in st.session_state:
+            st.session_state.show_table = False
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📊 Показать детальную сводку"):
+                st.session_state.show_summary = not st.session_state.show_summary
+        
+        with col2:
+            if st.button("📋 Показать таблицу MAX остатков"):
+                st.session_state.show_table = not st.session_state.show_table
+        
+        # Показ детальной сводки если флаг активен
+        if st.session_state.show_summary:
+            try:
+                summary = system.get_new_max_stock_summary()
+                if 'error' not in summary:
+                    st.write("**📊 Детальная сводка MAX остатков:**")
+                    
+                    # Общие параметры
+                    st.write(f"**Общие параметры:**")
+                    st.write(f"- Товаров: {summary['total_items']}")
+                    st.write(f"- Средние дни MIN: {summary['avg_parameters']['min_days']:.1f}")
+                    st.write(f"- Средние дни MAX: {summary['avg_parameters']['max_days']:.1f}")
+                    
+                    # Общие итоги
+                    st.write(f"**Общие итоги:**")
+                    st.write(f"- Общий MIN запас: {summary['totals']['avg_min_stock']:,.0f}")
+                    st.write(f"- Общий MAX запас: {summary['totals']['avg_max_stock']:,.0f}")
+                    st.write(f"- Рабочий диапазон: {summary['totals']['avg_range']:,.0f}")
+                    
+                    # По типам точек
+                    if summary['per_location']:
+                        st.write(f"**По типам точек:**")
+                        for loc_type, data in summary['per_location'].items():
+                            with st.expander(f"🏪 {loc_type.upper()}"):
+                                st.write(f"- MIN дни: {data['min_days']}")
+                                st.write(f"- MAX дни: {data['max_days']}")
+                                st.write(f"- Общий MIN запас: {data['total_min_stock']:,.0f}")
+                                st.write(f"- Общий MAX запас: {data['total_max_stock']:,.0f}")
+                                st.write(f"- Средний MIN: {data['avg_min_stock']:.1f}")
+                                st.write(f"- Средний MAX: {data['avg_max_stock']:.1f}")
+                else:
+                    st.error(f"❌ {summary['error']}")
+            except Exception as e:
+                st.error(f"❌ Ошибка получения сводки: {e}")
+        
+        # Показ таблицы если флаг активен
+        if st.session_state.show_table:
+            try:
+                st.write("**📋 Таблица рассчитанных максимальных остатков:**")
+                
+                # Определяем доступные колонки
+                all_cols = system.new_calculated_max_stock.columns.tolist()
+                display_cols = []
+                
+                # Приоритетные колонки для показа
+                priority_cols = ['номенклатура', 'ads', 'avg_min_stock', 'avg_max_stock', 'avg_range']
+                
+                # Добавляем колонки которые есть в данных
+                for col in priority_cols:
+                    if col in all_cols:
+                        display_cols.append(col)
+                
+                # Если основных колонок нет, показываем первые 5 доступных
+                if not display_cols:
+                    display_cols = all_cols[:5]
+                
+                if display_cols:
+                    st.dataframe(
+                        system.new_calculated_max_stock[display_cols].head(50),
+                        use_container_width=True
+                    )
+                    st.info(f"Показано первых 50 из {len(system.new_calculated_max_stock)} товаров")
+                else:
+                    st.error("❌ Не найдены подходящие колонки для отображения")
+                    
+            except Exception as e:
+                st.error(f"❌ Ошибка показа таблицы: {e}")
+    else:
+        st.warning("⚠️ Новые максимальные остатки не рассчитаны. Нажмите кнопку 'Рассчитать НОВЫЕ MAX остатки' выше.")
+    
+    st.divider()
+    
+    # СРАВНЕНИЕ с НОВЫМИ максимальными остатками
     st.subheader("⚖️ Сравнение с текущими остатками")
     
-    if st.button("📊 Сравнить с MIN/MAX"):
-        if not hasattr(system, 'calculated_max_stock'):
-            st.error("❌ Сначала рассчитайте максимальные остатки")
-        elif not hasattr(system, 'stock_data'):
+    if st.button("📊 Сравнить с НОВЫМИ MIN/MAX"):
+        # Проверяем НОВЫЕ максимальные остатки
+        if not hasattr(system, 'new_calculated_max_stock') or system.new_calculated_max_stock is None:
+            st.error("❌ Сначала рассчитайте НОВЫЕ максимальные остатки")
+        elif not hasattr(system, 'stock_data') or system.stock_data is None:
             st.error("❌ Сначала загрузите текущие остатки")
         else:
-            result = system.compare_with_max_stock()
-            if result['success']:
-                st.success("✅ Сравнение выполнено!")
+            # Создаем простое сравнение с новыми максимальными остатками
+            try:
+                import pandas as pd
+                
+                max_data = system.new_calculated_max_stock
+                stock_data = system.stock_data
+                
+                # Объединяем данные
+                comparison = pd.merge(
+                    max_data[['номенклатура', 'avg_min_stock', 'avg_max_stock']],
+                    stock_data[['номенклатура', 'total_current_stock']],
+                    on='номенклатура',
+                    how='inner'
+                )
+                
+                # Определяем статусы
+                comparison['status'] = 'НОРМА'
+                comparison.loc[comparison['total_current_stock'] < comparison['avg_min_stock'], 'status'] = 'НЕДОСТАТОК'
+                comparison.loc[comparison['total_current_stock'] > comparison['avg_max_stock'], 'status'] = 'ИЗБЫТОК'
+                
+                # Подсчитываем статистику
+                status_counts = comparison['status'].value_counts()
+                
+                st.success("✅ Сравнение с НОВЫМИ максимальными остатками выполнено!")
+                
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    shortage_count = (
-                        result.get('shortage_items') or 
-                        result.get('critical_items') or 
-                        result.get('deficit_items') or 
-                        0
-                    )
-                    st.metric("Недостаток", f"{shortage_count} товаров")
+                    st.metric("Недостаток", status_counts.get('НЕДОСТАТОК', 0))
                 with col2:
-                    st.metric("Избыток", f"{result['excess_items']} товаров")
+                    st.metric("Избыток", status_counts.get('ИЗБЫТОК', 0))
                 with col3:
-                    st.metric("Норма", f"{result['normal_items']} товаров")
-            else:
-                st.error(f"❌ {result['error']}")
+                    st.metric("Норма", status_counts.get('НОРМА', 0))
+                
+                # Показываем детали
+                with st.expander("📋 Детали сравнения"):
+                    st.dataframe(comparison[['номенклатура', 'total_current_stock', 'avg_min_stock', 'avg_max_stock', 'status']])
+                
+            except Exception as e:
+                st.error(f"❌ Ошибка сравнения: {e}")
 
+    # Показать состояние системы
+    if st.checkbox("🔍 Показать отладочную информацию"):
+        st.write("**Состояние системы:**")
+        st.write(f"- _new_max_stock_ready: {getattr(system, '_new_max_stock_ready', 'НЕТ')}")
+        st.write(f"- new_max_stock_calculator: {hasattr(system, 'new_max_stock_calculator')}")
+        st.write(f"- new_calculated_max_stock: {hasattr(system, 'new_calculated_max_stock')}")
+        st.write(f"- calculated_ads: {hasattr(system, 'calculated_ads') and system.calculated_ads is not None}")
+        st.write(f"- stock_data: {hasattr(system, 'stock_data') and system.stock_data is not None}")
+        
+        # Показать session_state
+        st.write("**Session State:**")
+        st.write(f"- show_settings: {st.session_state.get('show_settings', 'НЕТ')}")
+        st.write(f"- show_summary: {st.session_state.get('show_summary', 'НЕТ')}")
+        st.write(f"- show_table: {st.session_state.get('show_table', 'НЕТ')}")
+        
+        # Показать данные если есть
+        if hasattr(system, 'new_calculated_max_stock') and system.new_calculated_max_stock is not None:
+            st.write(f"**Данные новых MAX остатков:**")
+            st.write(f"- Строк: {len(system.new_calculated_max_stock)}")
+            st.write(f"- Колонки: {list(system.new_calculated_max_stock.columns)}")
 if __name__ == "__main__":
     main()

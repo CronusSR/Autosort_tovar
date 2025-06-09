@@ -32,6 +32,16 @@ except ImportError:
     print("⚠️ Модули цен не найдены")
 
 try:
+    from ads_category_fix import apply_category_average_ads_fix, revert_category_ads_fix
+    from streamlit_category_ads_ui import (
+        show_category_ads_fix_ui,
+        show_category_ads_statistics_ui, 
+        show_revert_ads_fix_ui
+    )
+    CATEGORY_FIX_AVAILABLE = True
+except ImportError:
+    CATEGORY_FIX_AVAILABLE = False
+try:
     from complete_price_integration import complete_price_integration_setup, show_price_integration_status_in_streamlit
     PRICE_INTEGRATION_AVAILABLE = True
 except ImportError:
@@ -821,6 +831,26 @@ def ads_calculation_page_updated(system):
         # ADS уже рассчитан
         st.success("✅ ADS рассчитан!")
         
+       
+        if CATEGORY_FIX_AVAILABLE:
+            st.markdown("---")
+            st.subheader("🔧 Работа с категориями")
+            
+            # Вкладки для организации интерфейса
+            tab1, tab2, tab3 = st.tabs(["🔧 Исправление ADS = 0", "📊 Статистика категорий", "🔄 Отмена изменений"])
+            
+            with tab1:
+                show_category_ads_fix_ui(system)
+            
+            with tab2:
+                show_category_ads_statistics_ui(system)
+            
+            with tab3:
+                show_revert_ads_fix_ui(system)
+        else:
+            st.info("ℹ️ Для использования исправления ADS по категориям добавьте файлы ads_category_fix.py и streamlit_category_ads_ui.py")
+        # === КОНЕЦ ИСПРАВЛЕНИЯ ===
+
         ads_data = system.calculated_ads
         
         # Показываем информацию о методе

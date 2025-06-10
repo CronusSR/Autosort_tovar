@@ -73,6 +73,7 @@ from real_fix_for_your_system import (
 )
 
 from warehouse_analysis import warehouse_analysis_page, add_warehouse_analysis_to_system
+
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",

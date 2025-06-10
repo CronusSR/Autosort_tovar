@@ -49,6 +49,18 @@ except ImportError:
     print("⚠️ Модуль полной интеграции цен не найден")
 warnings.filterwarnings('ignore')
 
+try:
+    from ads_category_fix_improved import quick_ads_category_fix, get_categories_preview
+    from streamlit_improved_ads_ui import (
+        show_improved_category_ads_fix_ui,
+        show_improved_category_statistics_ui,
+        show_improved_revert_ui,
+        quick_streamlit_integration
+    )
+    IMPROVED_ADS_FIX_AVAILABLE = True
+except ImportError:
+    IMPROVED_ADS_FIX_AVAILABLE = False
+    
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -832,24 +844,28 @@ def ads_calculation_page_updated(system):
         st.success("✅ ADS рассчитан!")
         
        
-        if CATEGORY_FIX_AVAILABLE:
+        if IMPROVED_ADS_FIX_AVAILABLE:
             st.markdown("---")
-            st.subheader("🔧 Работа с категориями")
+            st.subheader("🧠 Умная работа с категориями")
             
-            # Вкладки для организации интерфейса
-            tab1, tab2, tab3 = st.tabs(["🔧 Исправление ADS = 0", "📊 Статистика категорий", "🔄 Отмена изменений"])
+            # Вкладки для организации
+            tab1, tab2, tab3 = st.tabs([
+                "🔧 Умное исправление", 
+                "📊 Статистика категорий", 
+                "🔄 Отмена изменений"
+            ])
             
             with tab1:
-                show_category_ads_fix_ui(system)
+                show_improved_category_ads_fix_ui(system)
             
             with tab2:
-                show_category_ads_statistics_ui(system)
+                show_improved_category_statistics_ui(system)
             
             with tab3:
-                show_revert_ads_fix_ui(system)
+                show_improved_revert_ui(system)
         else:
-            st.info("ℹ️ Для использования исправления ADS по категориям добавьте файлы ads_category_fix.py и streamlit_category_ads_ui.py")
-        # === КОНЕЦ ИСПРАВЛЕНИЯ ===
+            # Быстрая версия без полного UI
+            quick_streamlit_integration(system)
 
         ads_data = system.calculated_ads
         
@@ -1046,6 +1062,11 @@ def ads_calculation_page_updated(system):
                     st.rerun()
                 else:
                     st.error(f"❌ {load_result['error']}")
+        try:
+            from minimal_ads_zero_category_fix import auto_fix_ads_zero_and_show_result
+            auto_fix_ads_zero_and_show_result(system)
+        except ImportError:
+            pass
 
 def show_ads_comparison(old_ads_data, new_ads_data):
     """Функция для сравнения старых и новых результатов ADS"""

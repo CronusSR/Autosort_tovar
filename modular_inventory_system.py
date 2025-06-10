@@ -15,7 +15,6 @@ import plotly.graph_objects as go
 from subcategory_abc import SubcategoryABCAnalyzer
 
 
-
 warnings.filterwarnings('ignore')
 
 class ModularInventorySystem:
@@ -49,6 +48,7 @@ class ModularInventorySystem:
             'min_stock_days': 30,
             'safety_factor': 1.0
         }
+        
         try:
             from new_max_stock_calculator import replace_max_stock_functionality
             replace_max_stock_functionality(self)
@@ -56,7 +56,7 @@ class ModularInventorySystem:
         except Exception as e:
             print(f"⚠️ Ошибка инициализации новых MAX остатков: {e}")
             self._new_max_stock_ready = False
-
+    
     def perform_subcategory_abc_analysis(self) -> Dict:
         """
         Выполнение ABC анализа по подкатегориям
@@ -1076,7 +1076,7 @@ class ModularInventorySystem:
                 df.columns = headers
             
             # Стандартизируем названия колонок
-            df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' for i, col in enumerate(df.columns)]
+            df.columns = [str(col).strip() if pd.notna(col) and str(col).strip() else f'empty_col_{i}' for i, col in enumerate(df.columns)]
             
             # Ищем колонки с данными по месяцам
             month_patterns = [

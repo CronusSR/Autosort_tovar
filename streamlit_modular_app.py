@@ -63,6 +63,8 @@ except ImportError:
 
 
 from movement_recommendations_streamlit import show_movement_recommendations_page
+
+from column_names_fix_correct import apply_correct_column_fix, check_correct_fix_status
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -109,6 +111,10 @@ def init_system():
     """Инициализация системы"""
     if 'inventory_system' not in st.session_state:
         st.session_state.inventory_system = ModularInventorySystem()
+        
+        # 🔧 ПРАВИЛЬНОЕ ИСПРАВЛЕНИЕ для файла с заголовками в 7-й строке
+        apply_correct_column_fix(st.session_state.inventory_system)
+        
     return st.session_state.inventory_system
 
 def max_stock_page(system):

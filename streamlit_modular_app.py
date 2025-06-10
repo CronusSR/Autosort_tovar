@@ -62,8 +62,7 @@ except ImportError:
     IMPROVED_ADS_FIX_AVAILABLE = False
 
 
-from movement_recommendations import show_movement_recommendations_page
-
+from movement_recommendations_streamlit import show_movement_recommendations_page
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -1811,12 +1810,12 @@ def main():
             "Выберите раздел:",
             [
                 "🔤 ABC анализ",
-                "📊 ADS расчет", 
+                "📊 ADS расчет",
                 "🔤📊 ABC подкатегории",
                 "📋 MIN запасы",
                 "⚖️ Сравнение остатков",
                 "📦 MAX остатки",
-                "🚚 Рекомендации по перемещениям"
+                "🚚 Рекомендации по перемещениям", 
                 "📤 Экспорт результатов",
                 "⚙️ Настройки"
             ]
@@ -1839,8 +1838,7 @@ def main():
             st.button("📋 MIN запасы", key="quick_min")
         elif not status['stock_analysis']['compared']:
             st.button("⚖️ Сравнить остатки", key="quick_compare")
-        elif page_selection == "🚚 Рекомендации по перемещениям":  # 🆕
-            show_movement_recommendations_page()
+        
         else:
             st.button("📤 Экспорт", key="quick_export")
     
@@ -1851,18 +1849,20 @@ def main():
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
         if PRICE_FEATURES_AVAILABLE:
-            add_price_info_to_ads_page(system)  # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ЦЕНАХ
+            add_price_info_to_ads_page(system)
+    elif page == "🔤📊 ABC подкатегории":  
+        subcategory_abc_analysis_page(system)
     elif page == "📋 MIN запасы":
         min_stock_calculation_page(system)
-    elif page == "📦 MAX остатки":
-        max_stock_page(system)
     elif page == "⚖️ Сравнение остатков":
         if PRICE_FEATURES_AVAILABLE:
             stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
         else:
             stock_comparison_page(system)  # Старая функция
-    elif page == "🔤📊 ABC подкатегории":  
-        subcategory_abc_analysis_page(system)
+    elif page == "📦 MAX остатки":
+        max_stock_page(system)
+    elif page == "🚚 Рекомендации по перемещениям":
+            show_movement_recommendations_page(system)
     elif page == "📤 Экспорт результатов":
         export_page(system)
         if PRICE_FEATURES_AVAILABLE:

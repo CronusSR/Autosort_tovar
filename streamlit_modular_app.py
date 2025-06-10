@@ -60,7 +60,10 @@ try:
     IMPROVED_ADS_FIX_AVAILABLE = True
 except ImportError:
     IMPROVED_ADS_FIX_AVAILABLE = False
-    
+
+
+from movement_recommendations import show_movement_recommendations_page
+
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -1809,10 +1812,11 @@ def main():
             [
                 "🔤 ABC анализ",
                 "📊 ADS расчет", 
-                "📋 MIN запасы",
-                "📦 MAX остатки",
-                "⚖️ Сравнение остатков",
                 "🔤📊 ABC подкатегории",
+                "📋 MIN запасы",
+                "⚖️ Сравнение остатков",
+                "📦 MAX остатки",
+                "🚚 Рекомендации по перемещениям"
                 "📤 Экспорт результатов",
                 "⚙️ Настройки"
             ]
@@ -1835,6 +1839,8 @@ def main():
             st.button("📋 MIN запасы", key="quick_min")
         elif not status['stock_analysis']['compared']:
             st.button("⚖️ Сравнить остатки", key="quick_compare")
+        elif page_selection == "🚚 Рекомендации по перемещениям":  # 🆕
+            show_movement_recommendations_page()
         else:
             st.button("📤 Экспорт", key="quick_export")
     

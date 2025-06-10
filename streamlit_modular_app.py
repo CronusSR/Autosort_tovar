@@ -65,6 +65,14 @@ except ImportError:
 from movement_recommendations_streamlit import show_movement_recommendations_page
 
 from column_names_fix_correct import apply_correct_column_fix, check_correct_fix_status
+
+from real_fix_for_your_system import (
+    apply_complete_fix_to_system, 
+    check_complete_fix_status,
+    diagnose_system_issues
+)
+
+from warehouse_analysis import warehouse_analysis_page, add_warehouse_analysis_to_system
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -108,13 +116,13 @@ def _extract_branch_name(filename: str) -> str:
 
 
 def init_system():
-    """Инициализация системы"""
+    """Инициализация системы с полным исправлением"""
     if 'inventory_system' not in st.session_state:
         st.session_state.inventory_system = ModularInventorySystem()
         
-        # 🔧 ПРАВИЛЬНОЕ ИСПРАВЛЕНИЕ для файла с заголовками в 7-й строке
-        apply_correct_column_fix(st.session_state.inventory_system)
-        
+        # 🔧 ПОЛНОЕ ИСПРАВЛЕНИЕ ВСЕХ МЕТОДОВ ЗАГРУЗКИ
+        apply_complete_fix_to_system(st.session_state.inventory_system)
+        add_warehouse_analysis_to_system(st.session_state.inventory_system)
     return st.session_state.inventory_system
 
 def max_stock_page(system):
@@ -1779,7 +1787,20 @@ def main():
     """Основная функция приложения"""
     # Инициализация системы
     system = init_system()
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔧 Диагностика исправлений")
 
+    if check_complete_fix_status(system):
+        st.sidebar.success("✅ Полное исправление активно")
+    else:
+        st.sidebar.error("❌ Исправление не применено")
+        if st.sidebar.button("🔄 Применить полное исправление"):
+            apply_complete_fix_to_system(system)
+            st.rerun()
+
+    # Кнопка диагностики
+    if st.sidebar.button("🔍 Диагностировать проблемы"):
+        diagnose_system_issues(system)
     # НОВОЕ: Применяем интеграцию цен (если доступна)
     if PRICE_INTEGRATION_AVAILABLE:
         complete_price_integration_setup(system)
@@ -1819,6 +1840,7 @@ def main():
                 "📊 ADS расчет",
                 "🔤📊 ABC подкатегории",
                 "📋 MIN запасы",
+                "🏪 Анализ складов",
                 "⚖️ Сравнение остатков",
                 "📦 MAX остатки",
                 "🚚 Рекомендации по перемещениям", 
@@ -1860,6 +1882,8 @@ def main():
         subcategory_abc_analysis_page(system)
     elif page == "📋 MIN запасы":
         min_stock_calculation_page(system)
+    elif page == "🏪 Анализ складов":
+        warehouse_analysis_page(system)
     elif page == "⚖️ Сравнение остатков":
         if PRICE_FEATURES_AVAILABLE:
             stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ

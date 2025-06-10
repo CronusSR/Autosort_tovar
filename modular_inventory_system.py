@@ -19,7 +19,77 @@ warnings.filterwarnings('ignore')
 
 class ModularInventorySystem:
     """Модульная система анализа товарных запасов"""
-
+    def update_modular_inventory_system():
+        """
+        Дополнения для modular_inventory_system.py:
+        """
+        
+        def analyze_warehouse_distribution(self):
+            """Анализирует распределение остатков по складам"""
+            if not hasattr(self, 'warehouse_analyzer'):
+                return None
+            
+            if not self.warehouse_analyzer.warehouse_analysis:
+                return None
+            
+            warehouse_distribution = {}
+            
+            for warehouse_key, config in self.warehouse_analyzer.warehouse_config.items():
+                warehouse_distribution[warehouse_key] = {
+                    'name': config['name'],
+                    'short_name': config['short_name'],
+                    'total_items': 0,
+                    'total_stock': 0,
+                    'critical_items': 0,
+                    'warning_items': 0,
+                    'good_items': 0
+                }
+            
+            # Подсчитываем статистику
+            for item in self.warehouse_analyzer.warehouse_analysis:
+                for warehouse_key, warehouse_data in item['warehouses'].items():
+                    stats = warehouse_distribution[warehouse_key]
+                    stats['total_items'] += 1
+                    stats['total_stock'] += warehouse_data['current_stock']
+                    
+                    if warehouse_data['status'] == 'critical':
+                        stats['critical_items'] += 1
+                    elif warehouse_data['status'] == 'warning':
+                        stats['warning_items'] += 1
+                    else:
+                        stats['good_items'] += 1
+            
+            return warehouse_distribution
+        
+        def get_warehouse_efficiency_report(self):
+            """Формирует отчет об эффективности складов"""
+            distribution = self.analyze_warehouse_distribution()
+            if not distribution:
+                return None
+            
+            efficiency_report = []
+            
+            for warehouse_key, stats in distribution.items():
+                if stats['total_items'] > 0:
+                    critical_rate = (stats['critical_items'] / stats['total_items']) * 100
+                    warning_rate = (stats['warning_items'] / stats['total_items']) * 100
+                    efficiency_score = 100 - critical_rate - (warning_rate * 0.5)  # Штраф за проблемы
+                    
+                    efficiency_report.append({
+                        'Склад': stats['short_name'],
+                        'Полное название': stats['name'],
+                        'Всего товаров': stats['total_items'],
+                        'Общий остаток': stats['total_stock'],
+                        'Критичных (%)': critical_rate,
+                        'Внимания (%)': warning_rate,
+                        'Эффективность (%)': efficiency_score,
+                        'Рейтинг': 'Отлично' if efficiency_score >= 90 else 
+                                  'Хорошо' if efficiency_score >= 75 else
+                                  'Удовлетворительно' if efficiency_score >= 60 else 'Требует внимания'
+                    })
+            
+            return pd.DataFrame(efficiency_report).sort_values('Эффективность (%)', ascending=False)
+    
     def initialize_subcategory_analyzer(self):
         """Инициализация анализатора подкатегорий"""
         if not hasattr(self, 'subcategory_analyzer'):

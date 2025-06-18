@@ -74,6 +74,8 @@ from real_fix_for_your_system import (
 
 from warehouse_analysis import warehouse_analysis_page, add_warehouse_analysis_to_system
 
+
+
 # Конфигурация страницы
 st.set_page_config(
     page_title="Модульная система анализа товарных запасов",
@@ -138,324 +140,739 @@ def init_system():
         add_warehouse_analysis_to_system(st.session_state.inventory_system)
     return st.session_state.inventory_system
 
+
+
+
+
 def enhance_ads_page_with_multi_store_analysis(system):
     """
-    ДОБАВЬ ЭТУ ФУНКЦИЮ в streamlit_modular_app.py
-    И ВЫЗОВИ ЕЕ в ads_calculation_page_updated ПОСЛЕ показа основных результатов
+    Анализ ADS по магазинам - АДАПТИРОВАНО ПОД РЕАЛЬНУЮ СТРУКТУРУ integration_patch
     """
-    
-    # Проверяем есть ли данные по множественным файлам
-    if not hasattr(system, 'multiple_files_data') or not system.multiple_files_data:
-        return
     
     st.markdown("---")
     st.subheader("🏪 Анализ ADS по магазинам отдельно")
     
-    # Улучшенная функция определения типа магазина
-    def get_enhanced_store_info(branch_name):
-        """Получение детальной информации о магазине"""
-        # Парсим город и тип
-        if 'шымкент' in branch_name.lower():
-            city = 'Шымкент'
-            if 'склад' in branch_name.lower() or 'скл' in branch_name.lower():
-                store_type = 'Склад'
-                icon = '📦'
-            elif 'маг' in branch_name.lower():
-                store_type = 'Магазин'
-                icon = '🏪'
-            else:
-                store_type = 'Магазин'
-                icon = '🏪'
-        elif 'астана' in branch_name.lower():
-            city = 'Астана'
-            if 'склад' in branch_name.lower() or 'скл' in branch_name.lower():
-                store_type = 'Склад'
-                icon = '📦'
-            else:
-                store_type = 'Магазин'
-                icon = '🏪'
-        elif 'барыс' in branch_name.lower():
-            city = 'Барыс'
-            store_type = 'Магазин'
-            icon = '🏪'
-        elif 'казыб' in branch_name.lower():
-            city = 'Казыбаева'
-            if 'склад' in branch_name.lower() or 'скл' in branch_name.lower():
-                store_type = 'Склад'
-                icon = '📦'
-            elif 'тд' in branch_name.lower():
-                store_type = 'ТД'
-                icon = '🏢'
-            else:
-                store_type = 'Магазин'
-                icon = '🏪'
-        else:
-            city = 'Неизвестно'
-            store_type = 'Магазин'
-            icon = '❓'
-        
-        return {
-            'city': city,
-            'type': store_type,
-            'icon': icon,
-            'full_name': f"{icon} {city} - {store_type}"
-        }
-    
-    # Собираем информацию по всем магазинам
-    store_summary = []
-    store_detailed_data = {}
-    
-    for branch_name, file_data in system.multiple_files_data.items():
-        if 'calculated_ads' in file_data and file_data['calculated_ads'] is not None:
-            ads_data = file_data['calculated_ads']
-            store_info = get_enhanced_store_info(branch_name)
-            
-            summary = {
-                'Филиал': branch_name,
-                'Название': store_info['full_name'],
-                'Город': store_info['city'],
-                'Тип': store_info['type'],
-                'Товаров': len(ads_data),
-                'Общие продажи': ads_data['total_sales'].sum() if 'total_sales' in ads_data.columns else 0,
-                'Общий ADS': ads_data['ads'].sum() if 'ads' in ads_data.columns else 0,
-                'Средний ADS': ads_data['ads'].mean() if 'ads' in ads_data.columns else 0,
-                'Максимальный ADS': ads_data['ads'].max() if 'ads' in ads_data.columns else 0
-            }
-            
-            store_summary.append(summary)
-            store_detailed_data[branch_name] = {
-                'info': store_info,
-                'data': ads_data,
-                'summary': summary
-            }
-    
-    if not store_summary:
+    # Проверяем multiple_files_data только если данные загружены
+    if not hasattr(system, 'multiple_files_data') or not system.multiple_files_data:
         st.info("📝 Нет данных по отдельным магазинам. Загрузите файлы через множественную загрузку.")
         return
     
-    # Сводная таблица по всем магазинам
-    st.subheader("📊 Сводка по всем магазинам")
+    # Проверяем что данные не пустые (исключаем случай до загрузки)
+    if len(system.multiple_files_data) < 2:
+        st.info("📝 Данные еще не обработаны. Загрузите файлы через множественную загрузку.")
+        return
     
-    summary_df = pd.DataFrame(store_summary)
+    # Ищем данные в processed_results
+    stores_info = []
+    
+    if 'processed_results' in system.multiple_files_data:
+        processed_results = system.multiple_files_data['processed_results']
+        
+        if isinstance(processed_results, dict):
+            # Проходим по результатам обработки
+            for filename, result_data in processed_results.items():
+                try:
+                    # Ищем ADS данные
+                    ads_data = None
+                    
+                    if isinstance(result_data, dict):
+                        # Возможные места где лежат ADS данные
+                        for key in ['calculated_ads', 'ads_data', 'data', 'result', 'ads_result']:
+                            if key in result_data:
+                                potential_data = result_data[key]
+                                
+                                if hasattr(potential_data, 'columns'):
+                                    ads_data = potential_data
+                                    break
+                                elif isinstance(potential_data, dict) and 'calculated_ads' in potential_data:
+                                    ads_data = potential_data['calculated_ads']
+                                    break
+                    
+                    elif hasattr(result_data, 'columns'):
+                        # result_data сам является DataFrame
+                        ads_data = result_data
+                    
+                    if ads_data is not None and hasattr(ads_data, 'columns'):
+                        # Извлекаем информацию о магазине
+                        branch_name = _extract_branch_name(filename)
+                        city, store_type = get_store_type_and_city(branch_name)
+                        
+                        # Безопасно получаем значения
+                        items_count = len(ads_data)
+                        
+                        total_sales = 0
+                        total_ads = 0
+                        mean_ads = 0
+                        max_ads = 0
+                        
+                        if 'total_sales' in ads_data.columns:
+                            total_sales = ads_data['total_sales'].sum()
+                        
+                        if 'ads' in ads_data.columns:
+                            total_ads = ads_data['ads'].sum()
+                            mean_ads = ads_data['ads'].mean()
+                            max_ads = ads_data['ads'].max()
+                        
+                        # Определяем иконку
+                        if 'склад' in store_type.lower() or 'скл' in store_type.lower():
+                            icon = '📦'
+                        elif 'тд' in store_type.lower():
+                            icon = '🏢'
+                        else:
+                            icon = '🏪'
+                        
+                        # Сохраняем информацию о магазине
+                        store_info = {
+                            'Файл': filename,
+                            'Название': f"{icon} {city.title()} - {store_type.title()}",
+                            'Город': city.title(),
+                            'Тип': store_type.title(),
+                            'Товаров': items_count,
+                            'Общие продажи': total_sales,
+                            'Общий ADS': total_ads,
+                            'Средний ADS': round(mean_ads, 4),
+                            'Макс ADS': round(max_ads, 4),
+                            'ads_data': ads_data,
+                            'branch_name': branch_name
+                        }
+                        
+                        stores_info.append(store_info)
+                        
+                except Exception as e:
+                    continue
+    
+    # ИСПРАВЛЕНИЕ ADS = 0 через средний по подкатегории
+    if stores_info:
+        st.subheader("🔧 Исправление товаров с нулевыми продажами")
+        
+        # Кнопка для применения исправления
+        if st.button("⚡ Применить исправление ADS = 0"):
+            with st.spinner("Применение исправления..."):
+                correction_results = []
+                
+                for store in stores_info:
+                    ads_data = store['ads_data'].copy()
+                    
+                    # Проверяем наличие нужных колонок
+                    if 'ads' not in ads_data.columns:
+                        continue
+                    
+                    # Находим товары с ADS = 0
+                    zero_ads_items = ads_data[ads_data['ads'] == 0]
+                    
+                    if len(zero_ads_items) == 0:
+                        correction_results.append({
+                            'store': store['Название'],
+                            'zero_items': 0,
+                            'corrected': 0,
+                            'message': 'Нет товаров с ADS = 0'
+                        })
+                        continue
+                    
+                    # Определяем подкатегории
+                    # Если есть колонка подкатегории - используем её
+                    subcategory_col = None
+                    for col in ['подкатегория', 'subcategory', 'категория', 'category', 'группа', 'group']:
+                        if col in ads_data.columns:
+                            subcategory_col = col
+                            break
+                    
+                    corrected_count = 0
+                    
+                    if subcategory_col:
+                        # Исправление по существующим подкатегориям
+                        zero_subcategories = zero_ads_items[subcategory_col].unique()
+                        
+                        for subcategory in zero_subcategories:
+                            if pd.isna(subcategory):
+                                continue
+                                
+                            # Находим товары этой подкатегории с ADS > 0
+                            subcategory_items = ads_data[
+                                (ads_data[subcategory_col] == subcategory) & 
+                                (ads_data['ads'] > 0)
+                            ]
+                            
+                            if len(subcategory_items) > 0:
+                                # Рассчитываем средний ADS по подкатегории
+                                avg_ads = subcategory_items['ads'].mean()
+                                
+                                # Применяем к товарам с ADS = 0 в этой подкатегории
+                                mask = (ads_data[subcategory_col] == subcategory) & (ads_data['ads'] == 0)
+                                ads_data.loc[mask, 'ads'] = avg_ads
+                                corrected_count += mask.sum()
+                    
+                    else:
+                        # Если нет подкатегорий, создаем их из названий товаров
+                        if 'номенклатура' in ads_data.columns:
+                            # Создаем упрощенные подкатегории из первых слов названия
+                            ads_data['auto_subcategory'] = ads_data['номенклатура'].apply(
+                                lambda x: ' '.join(str(x).split()[:2]) if pd.notna(x) else 'Неизвестно'
+                            )
+                            
+                            # ИСПРАВЛЕНО: Обновляем zero_ads_items после создания auto_subcategory
+                            zero_ads_items = ads_data[ads_data['ads'] == 0]
+                            
+                            # Исправление по автоматическим подкатегориям
+                            zero_subcategories = zero_ads_items['auto_subcategory'].unique()
+                            
+                            for subcategory in zero_subcategories:
+                                if pd.isna(subcategory) or subcategory == 'Неизвестно':
+                                    continue
+                                    
+                                # Находим товары этой подкатегории с ADS > 0
+                                subcategory_items = ads_data[
+                                    (ads_data['auto_subcategory'] == subcategory) & 
+                                    (ads_data['ads'] > 0)
+                                ]
+                                
+                                if len(subcategory_items) > 0:
+                                    # Рассчитываем средний ADS по подкатегории
+                                    avg_ads = subcategory_items['ads'].mean()
+                                    
+                                    # Применяем к товарам с ADS = 0 в этой подкатегории
+                                    mask = (ads_data['auto_subcategory'] == subcategory) & (ads_data['ads'] == 0)
+                                    ads_data.loc[mask, 'ads'] = avg_ads
+                                    corrected_count += mask.sum()
+                    
+                    # Для оставшихся товаров с ADS = 0 используем общий средний ADS магазина
+                    remaining_zero = ads_data[ads_data['ads'] == 0]
+                    if len(remaining_zero) > 0:
+                        overall_avg = ads_data[ads_data['ads'] > 0]['ads'].mean()
+                        if not pd.isna(overall_avg) and overall_avg > 0:
+                            ads_data.loc[ads_data['ads'] == 0, 'ads'] = overall_avg
+                            corrected_count += len(remaining_zero)
+                    
+                    # Обновляем данные в store
+                    store['ads_data'] = ads_data
+                    
+                    # Пересчитываем метрики магазина
+                    store['Общий ADS'] = ads_data['ads'].sum()
+                    store['Средний ADS'] = round(ads_data['ads'].mean(), 4)
+                    store['Макс ADS'] = round(ads_data['ads'].max(), 4)
+                    
+                    correction_results.append({
+                        'store': store['Название'],
+                        'zero_items': len(zero_ads_items),
+                        'corrected': corrected_count,
+                        'message': f'Исправлено {corrected_count} из {len(zero_ads_items)} товаров'
+                    })
+                
+                # Показываем результаты исправления
+                st.success("✅ Исправление завершено!")
+                
+                correction_df = pd.DataFrame(correction_results)
+                st.dataframe(correction_df, use_container_width=True)
+                
+                total_corrected = correction_df['corrected'].sum()
+                total_zero = correction_df['zero_items'].sum()
+                st.info(f"**Итого исправлено:** {total_corrected} товаров из {total_zero} с нулевыми продажами")
+        
+        # Показываем статистику товаров с нулевыми продажами
+        st.write("**📊 Статистика товаров с ADS = 0:**")
+        
+        zero_stats = []
+        for store in stores_info:
+            ads_data = store['ads_data']
+            if 'ads' in ads_data.columns:
+                zero_count = len(ads_data[ads_data['ads'] == 0])
+                total_count = len(ads_data)
+                zero_percent = (zero_count / total_count * 100) if total_count > 0 else 0
+                
+                zero_stats.append({
+                    'Магазин': store['Название'],
+                    'Товаров с ADS = 0': zero_count,
+                    'Всего товаров': total_count,
+                    'Процент с ADS = 0': round(zero_percent, 1)
+                })
+        
+        if zero_stats:
+            zero_df = pd.DataFrame(zero_stats)
+            st.dataframe(zero_df, use_container_width=True)
+    
+    # Если нет данных
+    if not stores_info:
+        st.info("📝 Данные по магазинам еще не обработаны или недоступны.")
+        
+        # Отладочная информация по кнопке
+        if st.button("🔍 Показать отладочную информацию"):
+            st.write("**Структура multiple_files_data:**")
+            for key, value in system.multiple_files_data.items():
+                st.write(f"- **{key}:** {type(value)}")
+                if isinstance(value, dict):
+                    st.write(f"  - Ключи: {list(value.keys())}")
+                elif hasattr(value, '__len__'):
+                    st.write(f"  - Размер: {len(value)}")
+        return
+    
+    # Показываем результаты в табличном виде
+    st.success(f"✅ Найдено данных по {len(stores_info)} магазинам")
     
     # Основные метрики
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        total_stores = len(summary_df)
-        st.metric("Всего точек", total_stores)
+        st.metric("Всего точек", len(stores_info))
     with col2:
-        total_items = summary_df['Товаров'].sum()
+        total_items = sum(store['Товаров'] for store in stores_info)
         st.metric("Всего товаров", total_items)
     with col3:
-        total_sales = summary_df['Общие продажи'].sum()
-        st.metric("Общие продажи", f"{total_sales:,.0f}")
+        total_sales_all = sum(store['Общие продажи'] for store in stores_info)
+        st.metric("Общие продажи", f"{total_sales_all:,.0f}")
     with col4:
-        avg_ads_all = summary_df['Общий ADS'].sum() / total_stores if total_stores > 0 else 0
-        st.metric("Средний ADS", f"{avg_ads_all:.4f}")
+        avg_ads = sum(store['Общий ADS'] for store in stores_info) / len(stores_info) if stores_info else 0
+        st.metric("Средний ADS", f"{avg_ads:.4f}")
     
-    # Таблица с детальными данными
-    st.dataframe(summary_df[['Название', 'Товаров', 'Общие продажи', 'Общий ADS', 'Средний ADS']], 
-                use_container_width=True)
+    # Основная таблица
+    st.subheader("📊 Сводная таблица по магазинам")
+    
+    # Подготавливаем данные для таблицы (без ads_data и branch_name для отображения)
+    display_data = []
+    for store in stores_info:
+        display_data.append({
+            'Название': store['Название'],
+            'Город': store['Город'],
+            'Тип': store['Тип'],
+            'Товаров': store['Товаров'],
+            'Общие продажи': store['Общие продажи'],
+            'Общий ADS': store['Общий ADS'],
+            'Средний ADS': store['Средний ADS'],
+            'Макс ADS': store['Макс ADS']
+        })
+    
+    df_display = pd.DataFrame(display_data)
+    st.dataframe(df_display, use_container_width=True)
     
     # Анализ по типам точек
     st.subheader("🏢 Анализ по типам точек")
     
-    type_analysis = summary_df.groupby('Тип').agg({
-        'Товаров': 'sum',
-        'Общие продажи': 'sum',
-        'Общий ADS': 'sum'
-    }).reset_index()
+    type_summary = {}
+    for store in stores_info:
+        store_type = store['Тип']
+        if store_type not in type_summary:
+            type_summary[store_type] = {
+                'Количество': 0,
+                'Общие продажи': 0,
+                'Товаров': 0,
+                'Общий ADS': 0
+            }
+        
+        type_summary[store_type]['Количество'] += 1
+        type_summary[store_type]['Общие продажи'] += store['Общие продажи']
+        type_summary[store_type]['Товаров'] += store['Товаров']
+        type_summary[store_type]['Общий ADS'] += store['Общий ADS']
     
-    type_analysis['Количество точек'] = summary_df.groupby('Тип').size().values
-    type_analysis['Средние продажи на точку'] = type_analysis['Общие продажи'] / type_analysis['Количество точек']
+    # Добавляем средние показатели
+    for store_type, data in type_summary.items():
+        data['Средние продажи на точку'] = data['Общие продажи'] / data['Количество']
+        data['Средний ADS на точку'] = data['Общий ADS'] / data['Количество']
     
-    st.dataframe(type_analysis, use_container_width=True)
+    type_df = pd.DataFrame.from_dict(type_summary, orient='index').reset_index()
+    type_df.rename(columns={'index': 'Тип точки'}, inplace=True)
+    st.dataframe(type_df, use_container_width=True)
     
-    # График продаж по типам
-    if len(type_analysis) > 1:
+    # График по типам точек если больше одного типа
+    if len(type_df) > 1:
         fig_types = px.bar(
-            type_analysis,
-            x='Тип',
+            type_df,
+            x='Тип точки',
             y='Общие продажи',
             title="Продажи по типам точек",
-            color='Тип',
-            text='Общие продажи'
+            color='Тип точки'
         )
-        fig_types.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
         st.plotly_chart(fig_types, use_container_width=True)
     
-    # Анализ по городам
-    st.subheader("🌍 Анализ по городам")
+    # Детальный анализ по выбранному магазину
+    st.subheader("🔍 Детальный анализ магазина")
     
-    city_analysis = summary_df.groupby('Город').agg({
-        'Товаров': 'sum',
-        'Общие продажи': 'sum',
-        'Общий ADS': 'sum'
-    }).reset_index()
-    
-    city_analysis['Количество точек'] = summary_df.groupby('Город').size().values
-    
-    # График по городам
-    if len(city_analysis) > 1:
-        fig_cities = px.pie(
-            city_analysis,
-            values='Общие продажи',
-            names='Город',
-            title="Распределение продаж по городам"
-        )
-        st.plotly_chart(fig_cities, use_container_width=True)
-    
-    # Детальный анализ по каждому магазину
-    st.subheader("🔍 Детальный анализ по магазинам")
-    
-    # Выбор магазина для детального просмотра
-    selected_store = st.selectbox(
+    # Выбор магазина для детального анализа
+    store_names = [store['Название'] for store in stores_info]
+    selected_store_name = st.selectbox(
         "Выберите магазин для детального анализа:",
-        options=list(store_detailed_data.keys()),
-        format_func=lambda x: store_detailed_data[x]['info']['full_name']
+        options=store_names
     )
     
-    if selected_store and selected_store in store_detailed_data:
-        store_data = store_detailed_data[selected_store]
-        store_info = store_data['info']
-        ads_data = store_data['data']
-        summary = store_data['summary']
-        
-        # Информация о выбранном магазине
-        st.write(f"### {store_info['full_name']}")
-        
+    # Находим выбранный магазин
+    selected_store = None
+    for store in stores_info:
+        if store['Название'] == selected_store_name:
+            selected_store = store
+            break
+    
+    if selected_store:
+        # Метрики выбранного магазина
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Товаров", summary['Товаров'])
+            st.metric("Товаров", selected_store['Товаров'])
         with col2:
-            st.metric("Общие продажи", f"{summary['Общие продажи']:,.0f}")
+            st.metric("Общие продажи", f"{selected_store['Общие продажи']:,.0f}")
         with col3:
-            st.metric("Общий ADS", f"{summary['Общий ADS']:.2f}")
+            st.metric("Общий ADS", f"{selected_store['Общий ADS']:.2f}")
         with col4:
-            st.metric("Средний ADS", f"{summary['Средний ADS']:.4f}")
+            st.metric("Средний ADS", f"{selected_store['Средний ADS']:.4f}")
         
-        # ABC анализ для выбранного магазина
-        if len(ads_data) > 0 and 'total_sales' in ads_data.columns:
-            st.write("**🔤 ABC анализ для магазина:**")
+        # Данные по товарам выбранного магазина
+        ads_data = selected_store['ads_data']
+        
+        if len(ads_data) > 0:
+            # Топ товары
+            st.write("**🏆 Топ-20 товаров по продажам:**")
             
-            # Рассчитываем ABC для этого магазина
-            ads_sorted = ads_data.sort_values('total_sales', ascending=False).copy()
-            total_sales_store = ads_sorted['total_sales'].sum()
+            if 'total_sales' in ads_data.columns:
+                top_items = ads_data.nlargest(20, 'total_sales')
+                display_columns = ['номенклатура']
+                
+                if 'total_sales' in ads_data.columns:
+                    display_columns.append('total_sales')
+                if 'ads' in ads_data.columns:
+                    display_columns.append('ads')
+                
+                st.dataframe(top_items[display_columns], use_container_width=True)
             
-            if total_sales_store > 0:
-                ads_sorted['cumulative_sales'] = ads_sorted['total_sales'].cumsum()
-                ads_sorted['cumulative_percent'] = (ads_sorted['cumulative_sales'] / total_sales_store) * 100
-                ads_sorted['abc_category'] = ads_sorted['cumulative_percent'].apply(
-                    lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+            # ABC анализ для выбранного магазина
+            if 'total_sales' in ads_data.columns:
+                st.write("**🔤 ABC анализ:**")
+                
+                ads_sorted = ads_data.sort_values('total_sales', ascending=False).copy()
+                total_sales_store = ads_sorted['total_sales'].sum()
+                
+                if total_sales_store > 0:
+                    ads_sorted['cumulative_sales'] = ads_sorted['total_sales'].cumsum()
+                    ads_sorted['cumulative_percent'] = (ads_sorted['cumulative_sales'] / total_sales_store) * 100
+                    ads_sorted['abc_category'] = ads_sorted['cumulative_percent'].apply(
+                        lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+                    )
+                    
+                    # Статистика ABC
+                    abc_counts = ads_sorted['abc_category'].value_counts()
+                    
+                    abc_col1, abc_col2, abc_col3 = st.columns(3)
+                    with abc_col1:
+                        st.metric("🔴 A товары", abc_counts.get('A', 0))
+                    with abc_col2:
+                        st.metric("🟡 B товары", abc_counts.get('B', 0))
+                    with abc_col3:
+                        st.metric("🟢 C товары", abc_counts.get('C', 0))
+            
+            # Все товары выбранного магазина
+            st.write("**📋 Все товары магазина:**")
+            
+            # Простые фильтры без сложных компонентов
+            st.write("*Фильтры:*")
+            
+            # Добавляем ABC категории если их нет
+            if 'total_sales' in ads_data.columns and 'abc_category' not in ads_data.columns:
+                ads_sorted_temp = ads_data.sort_values('total_sales', ascending=False).copy()
+                total_sales_temp = ads_sorted_temp['total_sales'].sum()
+                if total_sales_temp > 0:
+                    ads_sorted_temp['cumulative_sales'] = ads_sorted_temp['total_sales'].cumsum()
+                    ads_sorted_temp['cumulative_percent'] = (ads_sorted_temp['cumulative_sales'] / total_sales_temp) * 100
+                    ads_sorted_temp['abc_category'] = ads_sorted_temp['cumulative_percent'].apply(
+                        lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+                    )
+                    ads_data = ads_sorted_temp
+            
+            # Простые кнопки вместо selectbox
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                show_all = st.button("Все товары", key=f"all_{selected_store['branch_name']}")
+            with col2:
+                show_a = st.button("A товары", key=f"a_{selected_store['branch_name']}")
+            with col3:
+                show_b = st.button("B товары", key=f"b_{selected_store['branch_name']}")
+            with col4:
+                show_c = st.button("C товары", key=f"c_{selected_store['branch_name']}")
+            
+            # Применяем фильтр
+            filtered_data = ads_data.copy()
+            
+            if show_a and 'abc_category' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['abc_category'] == 'A']
+                st.write("Показаны A товары")
+            elif show_b and 'abc_category' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['abc_category'] == 'B']
+                st.write("Показаны B товары")
+            elif show_c and 'abc_category' in filtered_data.columns:
+                filtered_data = filtered_data[filtered_data['abc_category'] == 'C']
+                st.write("Показаны C товары")
+            else:
+                st.write("Показаны все товары")
+            
+            # Сортировка по продажам (по умолчанию)
+            if 'total_sales' in filtered_data.columns:
+                filtered_data = filtered_data.sort_values('total_sales', ascending=False)
+            
+            # Показываем данные
+            display_columns = []
+            if 'номенклатура' in filtered_data.columns:
+                display_columns.append('номенклатура')
+            if 'total_sales' in filtered_data.columns:
+                display_columns.append('total_sales')
+            if 'ads' in filtered_data.columns:
+                display_columns.append('ads')
+            if 'abc_category' in filtered_data.columns:
+                display_columns.append('abc_category')
+            
+            st.write(f"Товаров: {len(filtered_data)}")
+            
+            if display_columns:
+                st.dataframe(
+                    filtered_data[display_columns],
+                    use_container_width=True,
+                    height=400
                 )
-                
-                # Статистика ABC
-                abc_counts = ads_sorted['abc_category'].value_counts()
-                
-                abc_col1, abc_col2, abc_col3 = st.columns(3)
-                with abc_col1:
-                    st.metric("🔴 A товары", abc_counts.get('A', 0))
-                with abc_col2:
-                    st.metric("🟡 B товары", abc_counts.get('B', 0))
-                with abc_col3:
-                    st.metric("🟢 C товары", abc_counts.get('C', 0))
+    
+    # Общий ABC анализ по всем магазинам
+    st.subheader("🔤 Общий ABC анализ по всем магазинам")
+    
+    if stores_info:
+        # Объединяем данные всех магазинов
+        all_stores_data = []
         
-        # Топ товары магазина
-        st.write("**🏆 Топ-10 товаров по продажам:**")
-        if 'total_sales' in ads_data.columns:
-            top_items = ads_data.nlargest(10, 'total_sales')[['номенклатура', 'total_sales', 'ads']]
-            st.dataframe(top_items, use_container_width=True)
+        for store in stores_info:
+            store_data = store['ads_data'].copy()
+            if 'total_sales' in store_data.columns and 'номенклатура' in store_data.columns:
+                # Добавляем информацию о магазине к каждому товару
+                store_data['store_name'] = store['Название']
+                store_data['store_type'] = store['Тип']
+                store_data['city'] = store['Город']
+                all_stores_data.append(store_data)
         
-        # График распределения ADS для магазина
-        if 'ads' in ads_data.columns and len(ads_data) > 1:
-            fig_dist = px.histogram(
-                ads_data,
-                x='ads',
-                nbins=30,
-                title=f"Распределение ADS - {store_info['full_name']}"
+        if all_stores_data:
+            # Объединяем все данные
+            combined_data = pd.concat(all_stores_data, ignore_index=True)
+            
+            # Группируем по номенклатуре (суммируем продажи по всем магазинам)
+            if 'номенклатура' in combined_data.columns and 'total_sales' in combined_data.columns:
+                grouped_data = combined_data.groupby('номенклатура').agg({
+                    'total_sales': 'sum',
+                    'ads': 'sum' if 'ads' in combined_data.columns else 'first'
+                }).reset_index()
+                
+                # Рассчитываем общий ABC
+                grouped_sorted = grouped_data.sort_values('total_sales', ascending=False).copy()
+                total_sales_all = grouped_sorted['total_sales'].sum()
+                
+                if total_sales_all > 0:
+                    grouped_sorted['cumulative_sales'] = grouped_sorted['total_sales'].cumsum()
+                    grouped_sorted['cumulative_percent'] = (grouped_sorted['cumulative_sales'] / total_sales_all) * 100
+                    grouped_sorted['abc_category'] = grouped_sorted['cumulative_percent'].apply(
+                        lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+                    )
+                    
+                    # Статистика общего ABC
+                    abc_counts_total = grouped_sorted['abc_category'].value_counts()
+                    
+                    st.write("**📊 Общий ABC анализ (по всем магазинам):**")
+                    
+                    abc_col1, abc_col2, abc_col3, abc_col4 = st.columns(4)
+                    with abc_col1:
+                        st.metric("🔴 A товары", abc_counts_total.get('A', 0))
+                    with abc_col2:
+                        st.metric("🟡 B товары", abc_counts_total.get('B', 0))
+                    with abc_col3:
+                        st.metric("🟢 C товары", abc_counts_total.get('C', 0))
+                    with abc_col4:
+                        st.metric("📦 Всего товаров", len(grouped_sorted))
+                    
+                    # Показываем общий ABC в табличном виде
+                    st.write("**🔤 Общий ABC анализ - детали:**")
+                    
+                    # Простые кнопки фильтров вместо selectbox
+                    st.write("*Фильтры:*")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        show_all_abc = st.button("Все товары", key="abc_all_total")
+                    with col2:
+                        show_a_abc = st.button("A товары", key="abc_a_total")
+                    with col3:
+                        show_b_abc = st.button("B товары", key="abc_b_total")
+                    with col4:
+                        show_c_abc = st.button("C товары", key="abc_c_total")
+                    
+                    # Применяем фильтры
+                    filtered_total = grouped_sorted.copy()
+                    
+                    if show_a_abc:
+                        filtered_total = filtered_total[filtered_total['abc_category'] == 'A']
+                        st.write("Показаны A товары")
+                    elif show_b_abc:
+                        filtered_total = filtered_total[filtered_total['abc_category'] == 'B']
+                        st.write("Показаны B товары")
+                    elif show_c_abc:
+                        filtered_total = filtered_total[filtered_total['abc_category'] == 'C']
+                        st.write("Показаны C товары")
+                    else:
+                        st.write("Показаны все товары")
+                        # Сортируем по продажам по умолчанию
+                        filtered_total = filtered_total.sort_values('total_sales', ascending=False)
+                    
+                    st.write(f"Товаров: {len(filtered_total)}")
+                    
+                    # Показываем таблицу
+                    display_cols = ['номенклатура', 'total_sales', 'abc_category']
+                    if 'ads' in filtered_total.columns:
+                        display_cols.insert(-1, 'ads')
+                    
+                    st.dataframe(
+                        filtered_total[display_cols],
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # График ABC распределения
+                    abc_data_for_chart = abc_counts_total.reset_index()
+                    abc_data_for_chart.columns = ['ABC_Категория', 'Количество']
+                    
+                    fig_abc = px.pie(
+                        abc_data_for_chart,
+                        values='Количество',
+                        names='ABC_Категория',
+                        title="Распределение товаров по ABC категориям (общий)",
+                        color_discrete_map={'A': '#ff6b6b', 'B': '#feca57', 'C': '#48dbfb'}
+                    )
+                    st.plotly_chart(fig_abc, use_container_width=True)
+    
+    # Сравнение ABC между магазинами
+    if len(stores_info) > 1:
+        st.subheader("⚖️ Сравнение ABC между магазинами")
+        
+        abc_comparison = []
+        for store in stores_info:
+            store_data = store['ads_data']
+            if 'total_sales' in store_data.columns:
+                # Рассчитываем ABC для магазина
+                sorted_data = store_data.sort_values('total_sales', ascending=False).copy()
+                total_sales_store = sorted_data['total_sales'].sum()
+                
+                if total_sales_store > 0:
+                    sorted_data['cumulative_sales'] = sorted_data['total_sales'].cumsum()
+                    sorted_data['cumulative_percent'] = (sorted_data['cumulative_sales'] / total_sales_store) * 100
+                    sorted_data['abc_category'] = sorted_data['cumulative_percent'].apply(
+                        lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+                    )
+                    
+                    abc_counts = sorted_data['abc_category'].value_counts()
+                    
+                    abc_comparison.append({
+                        'Магазин': store['Название'],
+                        'Тип': store['Тип'],
+                        'Город': store['Город'],
+                        'A товары': abc_counts.get('A', 0),
+                        'B товары': abc_counts.get('B', 0),
+                        'C товары': abc_counts.get('C', 0),
+                        'Всего товаров': len(store_data),
+                        'A %': round((abc_counts.get('A', 0) / len(store_data) * 100), 1),
+                        'B %': round((abc_counts.get('B', 0) / len(store_data) * 100), 1),
+                        'C %': round((abc_counts.get('C', 0) / len(store_data) * 100), 1)
+                    })
+        
+        if abc_comparison:
+            abc_comparison_df = pd.DataFrame(abc_comparison)
+            st.dataframe(abc_comparison_df, use_container_width=True)
+            
+            # График сравнения ABC между магазинами
+            fig_comparison = go.Figure()
+            
+            for _, row in abc_comparison_df.iterrows():
+                fig_comparison.add_trace(go.Bar(
+                    name=row['Магазин'],
+                    x=['A', 'B', 'C'],
+                    y=[row['A товары'], row['B товары'], row['C товары']]
+                ))
+            
+            fig_comparison.update_layout(
+                title="Сравнение ABC распределения по магазинам",
+                barmode='group',
+                xaxis_title="ABC Категория",
+                yaxis_title="Количество товаров"
             )
-            st.plotly_chart(fig_dist, use_container_width=True)
+            
+            st.plotly_chart(fig_comparison, use_container_width=True)
     
-    # Сравнительный анализ между магазинами
-    st.subheader("⚖️ Сравнительный анализ")
-    
-    if len(store_summary) > 1:
-        # График сравнения эффективности
-        fig_compare = go.Figure()
-        
-        # Добавляем метрики для каждого магазина
-        for _, row in summary_df.iterrows():
-            fig_compare.add_trace(go.Scatter(
-                x=[row['Товаров']],
-                y=[row['Средний ADS']],
-                mode='markers+text',
-                marker=dict(
-                    size=max(10, row['Общие продажи'] / 10000),  # Размер зависит от продаж
-                    color=row['Общие продажи'],
-                    colorscale='Viridis',
-                    showscale=True
-                ),
-                text=row['Название'],
-                textposition="top center",
-                name=row['Название']
-            ))
-        
-        fig_compare.update_layout(
-            title="Сравнение магазинов: Количество товаров vs Средний ADS",
-            xaxis_title="Количество товаров",
-            yaxis_title="Средний ADS",
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig_compare, use_container_width=True)
-        
-        # Рейтинг магазинов
-        st.write("**📈 Рейтинг магазинов по эффективности:**")
-        
-        ranking_df = summary_df.copy()
-        ranking_df['Эффективность'] = (
-            ranking_df['Общий ADS'] * 0.4 + 
-            (ranking_df['Общие продажи'] / ranking_df['Товаров']) * 0.6
-        )
-        ranking_df = ranking_df.sort_values('Эффективность', ascending=False)
-        
-        for i, (_, row) in enumerate(ranking_df.iterrows(), 1):
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            st.write(f"{medal} **{row['Название']}** - Эффективность: {row['Эффективность']:.2f}")
-    
-    # Экспорт результатов по магазинам
+    # Экспорт результатов
     st.subheader("📤 Экспорт анализа по магазинам")
     
-    if st.button("📊 Создать отчет по магазинам", key="export_multi_store"):
-        with st.spinner("Создание отчета..."):
-            output = io.BytesIO()
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📊 Создать отчет Excel по магазинам"):
+            with st.spinner("Создание отчета..."):
+                try:
+                    output = io.BytesIO()
+                    
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        # Сводка по магазинам
+                        df_display.to_excel(writer, sheet_name='Сводка_магазинов', index=False)
+                        
+                        # Анализ по типам
+                        type_df.to_excel(writer, sheet_name='Анализ_по_типам', index=False)
+                        
+                        # Общий ABC анализ
+                        if 'grouped_sorted' in locals():
+                            grouped_sorted.to_excel(writer, sheet_name='Общий_ABC', index=False)
+                        
+                        # ABC сравнение между магазинами
+                        if 'abc_comparison_df' in locals():
+                            abc_comparison_df.to_excel(writer, sheet_name='ABC_сравнение', index=False)
+                        
+                        # Данные по каждому магазину (с ABC)
+                        for store in stores_info:
+                            sheet_name = f"{store['branch_name']}"[:31]  # Ограничение Excel
+                            
+                            # Добавляем ABC категории к данным магазина
+                            store_data_with_abc = store['ads_data'].copy()
+                            if 'total_sales' in store_data_with_abc.columns:
+                                sorted_temp = store_data_with_abc.sort_values('total_sales', ascending=False).copy()
+                                total_sales_temp = sorted_temp['total_sales'].sum()
+                                if total_sales_temp > 0:
+                                    sorted_temp['cumulative_sales'] = sorted_temp['total_sales'].cumsum()
+                                    sorted_temp['cumulative_percent'] = (sorted_temp['cumulative_sales'] / total_sales_temp) * 100
+                                    sorted_temp['abc_category'] = sorted_temp['cumulative_percent'].apply(
+                                        lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+                                    )
+                                    store_data_with_abc = sorted_temp
+                            
+                            store_data_with_abc.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    output.seek(0)
+                    
+                    st.download_button(
+                        label="💾 Скачать отчет по магазинам",
+                        data=output,
+                        file_name=f"ads_analysis_by_stores_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    st.success("✅ Отчет готов к скачиванию!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Ошибка создания отчета: {str(e)}")
+    
+    with col2:
+        st.info("""
+        **Содержимое отчета:**
+        - Сводка по всем магазинам
+        - Анализ по типам точек  
+        - Общий ABC анализ по всем товарам
+        - ABC сравнение между магазинами
+        - Детальные данные по каждому магазину с ABC
+        - Возможность дальнейшего анализа
+        """)
+    
+    # Отладочная информация по кнопке
+    if st.button("🔍 Показать отладочную информацию"):
+        with st.expander("Отладочная информация", expanded=True):
+            st.write("**Структура multiple_files_data:**")
+            for key, value in system.multiple_files_data.items():
+                st.write(f"- **{key}:** {type(value)}")
+                if isinstance(value, dict):
+                    st.write(f"  - Ключи: {list(value.keys())}")
+                elif hasattr(value, '__len__'):
+                    st.write(f"  - Размер: {len(value)}")
             
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Сводка по магазинам
-                summary_df.to_excel(writer, sheet_name='Сводка_магазинов', index=False)
-                
-                # Анализ по типам
-                type_analysis.to_excel(writer, sheet_name='Анализ_по_типам', index=False)
-                
-                # Анализ по городам  
-                city_analysis.to_excel(writer, sheet_name='Анализ_по_городам', index=False)
-                
-                # Данные по каждому магазину
-                for branch_name, store_data in store_detailed_data.items():
-                    sheet_name = f"{branch_name}"[:31]  # Ограничение Excel на длину имени
-                    store_data['data'].to_excel(writer, sheet_name=sheet_name, index=False)
-            
-            output.seek(0)
-            
-            st.download_button(
-                label="💾 Скачать отчет по магазинам",
-                data=output,
-                file_name=f"ads_analysis_by_stores_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            st.success("✅ Отчет готов к скачиванию!")
-
+            st.write("**Найденные магазины:**")
+            for store in stores_info:
+                st.write(f"- {store['Название']}: {store['Товаров']} товаров")
 
 
 def max_stock_page(system):
@@ -1157,7 +1574,10 @@ def create_zero_sales_visualization(abc_data):
 def ads_calculation_page_updated(system):
 
     st.header("📊 Расчет ADS")
-    
+
+    # Показываем анализ по магазинам если есть множественные файлы
+    enhance_ads_page_with_multi_store_analysis(system)
+
     try:
         from integration_patch import add_multiple_files_interface_to_existing
         
@@ -1166,9 +1586,8 @@ def ads_calculation_page_updated(system):
     except Exception as e:
         st.error(f"Ошибка загрузки множественных файлов: {e}")
 
-    # Показываем анализ по магазинам если есть множественные файлы
-    enhance_ads_page_with_multi_store_analysis(system)
     
+
     st.markdown("""
     **🔢 ФОРМУЛА ADS:**
     - **Номенклатура:** Читается из колонки B 

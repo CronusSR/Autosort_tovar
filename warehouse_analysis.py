@@ -268,7 +268,7 @@ class WarehouseAnalyzer:
         
         self.warehouse_analysis = analysis_results
         return analysis_results
-
+    
     def get_warehouse_recommendations(self):
         """Формирует рекомендации по каждому складу с учетом MIN/MAX"""
         if not self.warehouse_analysis:
@@ -366,6 +366,139 @@ class WarehouseAnalyzer:
             },
             'warehouse_stats': warehouse_stats_df
         }
+    def analyze_warehouse_with_store_integration(self, remains_df, store_ads_by_city, min_days=10, max_days=50):
+        """
+        Анализ складов с интеграцией ADS данных из магазинов по городам
+        """
+        if remains_df is None or remains_df.empty:
+            return None
+        
+        print(f"🔄 Начало анализа складов с интеграцией магазинов")
+        print(f"📊 Товаров в остатках: {len(remains_df)}")
+        print(f"🌍 Городов с ADS данными: {len(store_ads_by_city) if store_ads_by_city else 0}")
+        
+        # Получаем объединенные ADS по городам
+        unified_ads = create_unified_ads_by_city(store_ads_by_city) if store_ads_by_city else {}
+        
+        # Маппинг складов по городам
+        warehouse_city_mapping = get_warehouse_city_mapping()
+        
+        analysis_results = []
+        processed_items = 0
+        
+        for _, item in remains_df.iterrows():
+            item_name = item['номенклатура']
+            
+            item_analysis = {
+                'номенклатура': item_name,
+                'итого_остаток': item['итого_остаток'],
+                'warehouses': {}
+            }
+            
+            # Анализируем каждый склад
+            for warehouse_key, config in self.warehouse_config.items():
+                stock_col = f'{warehouse_key}_остаток'
+                current_stock = item.get(stock_col, 0)
+                
+                # Определяем к какому городу относится склад
+                warehouse_city = None
+                for city, warehouses in warehouse_city_mapping.items():
+                    if warehouse_key in warehouses:
+                        warehouse_city = city
+                        break
+                
+                # Получаем ADS для товара из соответствующего города
+                ads_value = 0
+                ads_source = "нет данных"
+                
+                if warehouse_city and warehouse_city in unified_ads:
+                    city_ads = unified_ads[warehouse_city]
+                    ads_match = city_ads[city_ads['номенклатура'] == item_name]
+                    if not ads_match.empty:
+                        ads_value = ads_match.iloc[0].get('ads', 0)
+                        ads_source = f"город {warehouse_city}"
+                
+                # Если нет ADS для города, пробуем общие данные
+                if ads_value == 0 and 'общие' in unified_ads:
+                    general_ads = unified_ads['общие']
+                    ads_match = general_ads[general_ads['номенклатура'] == item_name]
+                    if not ads_match.empty:
+                        ads_value = ads_match.iloc[0].get('ads', 0)
+                        ads_source = "общие данные"
+                
+                # Если все еще нет ADS, пробуем все города
+                if ads_value == 0:
+                    for city, city_ads in unified_ads.items():
+                        ads_match = city_ads[city_ads['номенклатура'] == item_name]
+                        if not ads_match.empty:
+                            ads_value = ads_match.iloc[0].get('ads', 0)
+                            ads_source = f"другой город {city}"
+                            break
+                
+                # Рассчитываем MIN и MAX запасы
+                min_stock = ads_value * min_days if ads_value > 0 else 0
+                max_stock = ads_value * max_days if ads_value > 0 else 0
+                
+                # Анализ остатков
+                months_of_stock = 0
+                if ads_value > 0:
+                    months_of_stock = current_stock / (ads_value * 30)  # Месяцы запаса
+                elif current_stock > 0:
+                    months_of_stock = 999
+                
+                # Определение статуса
+                status = 'good'
+                recommendation = ''
+                order_quantity = 0
+                
+                if ads_value > 0:
+                    if current_stock < min_stock:
+                        if current_stock < min_stock * 0.5:
+                            status = 'critical'
+                            order_quantity = max_stock - current_stock
+                            recommendation = f'КРИТИЧНО! Заказать {order_quantity:.0f} единиц (ADS: {ads_source})'
+                        else:
+                            status = 'warning'
+                            order_quantity = min_stock - current_stock
+                            recommendation = f'Заказать {order_quantity:.0f} до MIN (ADS: {ads_source})'
+                    elif current_stock > max_stock:
+                        status = 'excess'
+                        excess_amount = current_stock - max_stock
+                        recommendation = f'Избыток {excess_amount:.0f} единиц (ADS: {ads_source})'
+                    else:
+                        status = 'good'
+                        recommendation = f'В норме (ADS: {ads_source})'
+                else:
+                    if current_stock > 0:
+                        status = 'no_ads'
+                        recommendation = 'Есть остатки, но нет данных продаж'
+                    else:
+                        status = 'no_ads'
+                        recommendation = 'Нет остатков и данных продаж'
+                
+                item_analysis['warehouses'][warehouse_key] = {
+                    'city': warehouse_city or 'общий',
+                    'current_stock': current_stock,
+                    'ads': ads_value,
+                    'ads_source': ads_source,
+                    'min_stock': min_stock,
+                    'max_stock': max_stock,
+                    'months_of_stock': months_of_stock,
+                    'status': status,
+                    'recommendation': recommendation,
+                    'order_quantity': order_quantity,
+                    'short_name': config['short_name']
+                }
+            
+            analysis_results.append(item_analysis)
+            processed_items += 1
+            
+            if processed_items % 100 == 0:
+                print(f"📊 Обработано товаров: {processed_items}")
+        
+        print(f"✅ Анализ завершен. Обработано товаров: {processed_items}")
+        return analysis_results
+
 
 
 def diagnose_warehouse_system(system):
@@ -438,77 +571,70 @@ def add_warehouse_analysis_to_system(system):
 
 
 def warehouse_analysis_page(system):
-    """Страница анализа остатков по складам"""
-    st.header("🏪 Анализ остатков по складам")
+    """
+    Страница анализа остатков по складам с интеграцией ADS магазинов
+    """
     
-    # Проверка готовности системы
-    if not hasattr(system, '_warehouse_analysis_ready'):
-        add_warehouse_analysis_to_system(system)
+    st.header("📦 Анализ остатков по складам")
     
-    st.markdown("""
-    **Анализ остатков по складам** позволяет:
-    - 📊 Проанализировать остатки на каждом складе отдельно
-    - ⚠️ Выявить критичные товары по складам
-    - 📋 Получить рекомендации по заказу для каждого склада
-    - 📈 Сравнить эффективность складов
-    - 🎯 Рассчитать MIN/MAX запасы по ADS
-    - 🛒 Создать заказы на закупку с ценами (если доступны)
-    """)
+    # Инициализация анализатора складов если его нет
+    if not hasattr(system, 'warehouse_analyzer'):
+        system.warehouse_analyzer = WarehouseAnalyzer()
+        print("✅ Анализатор складов инициализирован")
     
-    # Добавляем диагностику системы
-    diagnose_warehouse_system(system)
+    # Проверяем интеграцию с анализом магазинов
+    store_ads_by_city = integrate_store_ads_with_warehouse_analysis(system)
     
-    st.divider()
+    if store_ads_by_city:
+        st.success(f"✅ Найдены ADS данные по {len(store_ads_by_city)} городам")
+        
+        # Показываем какие города найдены
+        with st.expander("🌍 Найденные города с ADS данными", expanded=True):
+            for city, stores in store_ads_by_city.items():
+                st.write(f"**{city.title()}:** {len(stores)} магазинов")
+                for store in stores:
+                    items_count = len(store['ads_data']) if hasattr(store['ads_data'], '__len__') else 0
+                    total_ads = store['ads_data']['ads'].sum() if 'ads' in store['ads_data'].columns else 0
+                    st.write(f"  - {store['branch_name']} ({store['store_type']}) - {items_count} товаров, ADS: {total_ads:.2f}")
+    else:
+        st.warning("⚠️ Нет данных ADS по магазинам. Загрузите файлы продаж в разделе 'ADS по магазинам'")
+        st.info("💡 Анализ будет выполнен без привязки к конкретным городам")
     
-    # Проверяем наличие ADS
-    status = system.get_system_status()
-    if not status['sales_analysis']['ads_calculated']:
-        st.warning("⚠️ Для анализа складов необходимо сначала рассчитать ADS")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📊 Перейти к расчету ADS"):
-                st.switch_page("ADS расчет")
-        with col2:
-            if st.button("🔍 Продолжить без ADS (только остатки)"):
-                st.info("📋 Анализ будет проведен только по остаткам без расчета рекомендаций")
-        if not st.button("🔍 Продолжить без ADS (только остатки)"):
-            return
-    
-    # Настройки MIN/MAX запасов
-    st.subheader("⚙️ Настройки MIN/MAX запасов")
+    # Параметры анализа
+    st.subheader("⚙️ Параметры анализа")
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("**📉 Минимальные запасы**")
         min_days = st.slider(
-            "Дни MIN запаса (на сколько дней должен лежать товар):",
+            "Дни MIN запаса:",
             min_value=5,
             max_value=60,
-            value=10,
-            step=1,
-            help="MIN запас = ADS × количество дней. Например: ADS=5, дни=10 → MIN=50"
+            value=15,
+            step=5,
+            help="MIN запас = ADS × количество дней"
         )
         st.info(f"💡 Пример: ADS=5, дни={min_days} → MIN={5 * min_days}")
     
     with col2:
         st.markdown("**📈 Максимальные запасы**")
         max_days = st.slider(
-            "Дни MAX запаса (максимальный запас на складе):",
+            "Дни MAX запаса:",
             min_value=min_days + 5,
             max_value=180,
-            value=50,
+            value=45,
             step=5,
-            help="MAX запас = ADS × количество дней. Например: ADS=5, дни=50 → MAX=250"
+            help="MAX запас = ADS × количество дней"
         )
         st.info(f"💡 Пример: ADS=5, дни={max_days} → MAX={5 * max_days}")
     
-    # Показываем расчетную формулу
+    # Показываем формулы
     st.markdown(f"""
     **📊 Формулы расчета:**
     - **MIN запас** = ADS × {min_days} дней
     - **MAX запас** = ADS × {max_days} дней
-    - **Рабочий диапазон** = MAX - MIN = ADS × {max_days - min_days} дней
+    - **Рабочий диапазон** = {max_days - min_days} дней
     """)
     
     st.divider()
@@ -529,20 +655,14 @@ def warehouse_analysis_page(system):
                 file_data = pd.read_excel(remains_file, header=None)
                 file_data = file_data.values.tolist()
                 
-                # Показываем отладочную информацию
-                st.info(f"📊 Файл прочитан: {len(file_data)} строк, {len(file_data[0]) if file_data else 0} колонок")
-                
-                # Проверяем структуру файла
-                if len(file_data) < 10:
-                    st.error("❌ Файл слишком мал. Должно быть минимум 10 строк с данными.")
-                    return
+                st.info(f"📊 Файл прочитан: {len(file_data)} строк")
                 
                 # Показываем заголовки складов из 7й строки
                 if len(file_data) > 6:
                     header_row = file_data[6]
                     st.info(f"📋 7я строка (заголовки складов): {header_row[:5] if header_row else 'Пустая'}...")
                 
-                # Парсим остатки с правильной структурой
+                # Парсим остатки
                 remains_df = system.warehouse_analyzer.parse_remains_file(file_data)
                 
                 if remains_df is not None and not remains_df.empty:
@@ -562,42 +682,40 @@ def warehouse_analysis_page(system):
                                 st.write(f"**{config['short_name']}**: {total_stock:,.0f} единиц на {items_with_stock} товарах")
                     
                     # Кнопка анализа
-                    if st.button("🔍 Проанализировать остатки по складам"):
-                        with st.spinner("Анализ остатков по складам..."):
-                            # Получаем ADS данные
-                            ads_data = system.calculated_ads if hasattr(system, 'calculated_ads') else None
+                    if st.button("🔍 Проанализировать остатки по складам", type="primary"):
+                        with st.spinner("Анализ остатков с учетом ADS магазинов..."):
                             
-                            if ads_data is not None:
-                                st.info(f"📊 Используем ADS данные: {len(ads_data)} товаров")
-                            else:
-                                st.warning("⚠️ ADS данные отсутствуют. Анализ будет проведен только по остаткам.")
-                            
-                            # Показываем параметры анализа
-                            st.info(f"⚙️ Параметры анализа: MIN = {min_days} дней, MAX = {max_days} дней")
-                            
-                            # Выполняем анализ с параметрами MIN/MAX
-                            analysis = system.warehouse_analyzer.analyze_warehouse_stock(
-                                remains_df, ads_data, min_days, max_days
-                            )
-                            
-                            if analysis:
-                                recommendations = system.warehouse_analyzer.get_warehouse_recommendations()
-                                dashboard_data = system.warehouse_analyzer.create_warehouse_dashboard()
+                            if store_ads_by_city:
+                                # Используем новый метод с интеграцией магазинов
+                                analysis = system.warehouse_analyzer.analyze_warehouse_with_store_integration(
+                                    remains_df, store_ads_by_city, min_days, max_days
+                                )
                                 
-                                st.success("✅ Анализ складов завершен!")
-                                
-                                # Отображаем результаты
-                                display_warehouse_analysis_results(dashboard_data, recommendations, analysis)
+                                if analysis:
+                                    st.success("✅ Анализ складов завершен с учетом ADS магазинов!")
+                                    display_enhanced_warehouse_results(analysis, store_ads_by_city)
+                                else:
+                                    st.error("❌ Ошибка анализа остатков")
                             else:
-                                st.error("❌ Ошибка анализа остатков")
+                                # Используем старый метод если нет данных магазинов
+                                ads_data = system.calculated_ads if hasattr(system, 'calculated_ads') else None
+                                analysis = system.warehouse_analyzer.analyze_warehouse_stock(
+                                    remains_df, ads_data, min_days, max_days
+                                )
+                                
+                                if analysis:
+                                    st.success("✅ Анализ складов завершен!")
+                                    # Используем старое отображение результатов
+                                    st.warning("⚠️ Анализ выполнен без привязки к городам")
+                                else:
+                                    st.error("❌ Ошибка анализа остатков")
                 else:
-                    st.error("❌ Не удалось обработать файл остатков. Проверьте структуру файла.")
+                    st.error("❌ Не удалось обработать файл остатков")
                     
             except Exception as e:
-                st.error(f"❌ Ошибка обработки файла: {e}")
-                with st.expander("🔍 Подробная информация об ошибке"):
+                st.error(f"❌ Ошибка: {str(e)}")
+                with st.expander("🔍 Подробности ошибки"):
                     st.code(traceback.format_exc())
-
 
 def display_warehouse_analysis_results(dashboard_data, recommendations, analysis):
     """Отображает результаты анализа складов с MIN/MAX запасами"""
@@ -1351,3 +1469,240 @@ def export_warehouse_analysis(recommendations, analysis, warehouse_stats):
         
     except Exception as e:
         st.error(f"❌ Ошибка экспорта: {e}")
+
+def integrate_store_ads_with_warehouse_analysis(system):
+    """
+    Интегрирует ADS данные из анализа магазинов с анализом складов
+    """
+    
+    # Проверяем есть ли данные по магазинам
+    if not hasattr(system, 'multiple_files_data') or not system.multiple_files_data:
+        return None
+        
+    # Получаем ADS данные по городам
+    store_ads_by_city = {}
+    
+    if 'processed_results' in system.multiple_files_data:
+        processed_results = system.multiple_files_data['processed_results']
+        
+        if isinstance(processed_results, dict):
+            for filename, result_data in processed_results.items():
+                try:
+                    # Используем функции из streamlit_modular_app.py
+                    from streamlit_modular_app import _extract_branch_name, get_store_type_and_city
+                    
+                    # Извлекаем информацию о магазине
+                    branch_name = _extract_branch_name(filename)
+                    city, store_type = get_store_type_and_city(branch_name)
+                    
+                    # Ищем ADS данные
+                    ads_data = None
+                    if isinstance(result_data, dict):
+                        for key in ['calculated_ads', 'ads_data', 'data', 'result']:
+                            if key in result_data and result_data[key] is not None:
+                                if hasattr(result_data[key], 'columns'):
+                                    ads_data = result_data[key]
+                                    break
+                    elif hasattr(result_data, 'columns'):
+                        ads_data = result_data
+                    
+                    if ads_data is not None and hasattr(ads_data, 'columns'):
+                        # Группируем по городам
+                        if city not in store_ads_by_city:
+                            store_ads_by_city[city] = []
+                        
+                        store_ads_by_city[city].append({
+                            'store_type': store_type,
+                            'branch_name': branch_name,
+                            'ads_data': ads_data
+                        })
+                        
+                except Exception as e:
+                    continue
+    
+    return store_ads_by_city
+
+def create_unified_ads_by_city(store_ads_by_city):
+    """
+    Создает объединенные ADS данные по городам
+    """
+    unified_ads = {}
+    
+    for city, stores in store_ads_by_city.items():
+        # Объединяем ADS данные всех магазинов города
+        city_ads_data = []
+        
+        for store in stores:
+            ads_data = store['ads_data'].copy()
+            if 'номенклатура' in ads_data.columns:
+                # Добавляем информацию о магазине
+                ads_data['source_store'] = store['branch_name']
+                ads_data['store_type'] = store['store_type']
+                city_ads_data.append(ads_data)
+        
+        if city_ads_data:
+            # Объединяем все данные города
+            combined_city_data = pd.concat(city_ads_data, ignore_index=True)
+            
+            # Группируем по номенклатуре и суммируем ADS
+            if 'номенклатура' in combined_city_data.columns and 'ads' in combined_city_data.columns:
+                unified_city_ads = combined_city_data.groupby('номенклатура').agg({
+                    'ads': 'sum',
+                    'total_sales': 'sum' if 'total_sales' in combined_city_data.columns else 'first'
+                }).reset_index()
+                
+                unified_ads[city] = unified_city_ads
+    
+    return unified_ads
+
+def get_warehouse_city_mapping():
+    """
+    Создает маппинг складов по городам
+    """
+    return {
+        'шымкент': [
+            'Шымкент_Овощная_база',
+            'Овощная_база_Магазин'
+        ],
+        'барыс': [
+            'Барыс_TRADE'
+        ],
+        'казыбаева': [
+            'Казыбаева_TRADE',
+            'Казыбаева_магазин'
+        ],
+        'астана': [
+            'АО_TRADE',  # Перенесено из общих в астану
+        ],
+        'общие': [
+            'База_Комплект', 
+            'Магазин_фурнитуры',
+            'Склад_1'
+        ]
+    }
+
+def display_enhanced_warehouse_results(analysis, store_ads_by_city):
+    """
+    Отображает результаты улучшенного анализа складов
+    """
+    
+    st.subheader("📊 Результаты анализа по городам")
+    
+    # Группируем результаты по городам
+    results_by_city = {}
+    
+    for item in analysis:
+        for warehouse_key, warehouse_data in item['warehouses'].items():
+            city = warehouse_data['city'] or 'общие'
+            
+            if city not in results_by_city:
+                results_by_city[city] = {
+                    'critical': 0,
+                    'warning': 0,
+                    'good': 0,
+                    'excess': 0,
+                    'no_ads': 0,
+                    'total_order': 0,
+                    'warehouses': []
+                }
+            
+            status = warehouse_data['status']
+            results_by_city[city][status] += 1
+            results_by_city[city]['total_order'] += warehouse_data['order_quantity']
+            
+            if warehouse_data['short_name'] not in results_by_city[city]['warehouses']:
+                results_by_city[city]['warehouses'].append(warehouse_data['short_name'])
+    
+    # Показываем результаты по городам
+    for city, data in results_by_city.items():
+        st.write(f"### {city.title()}")
+        st.write(f"*Склады: {', '.join(data['warehouses'])}*")
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("🔴 Критичные", data['critical'])
+        with col2:
+            st.metric("🟡 Внимание", data['warning']) 
+        with col3:
+            st.metric("🟢 Норма", data['good'])
+        with col4:
+            st.metric("🔵 Избыток", data['excess'])
+        with col5:
+            st.metric("📦 К заказу", f"{data['total_order']:.0f}")
+    
+    # Детальная таблица
+    st.subheader("📋 Детальные результаты")
+    
+    detailed_results = []
+    for item in analysis:
+        for warehouse_key, warehouse_data in item['warehouses'].items():
+            if warehouse_data['current_stock'] > 0 or warehouse_data['order_quantity'] > 0:  # Показываем только значимые записи
+                detailed_results.append({
+                    'Товар': item['номенклатура'][:50],  # Обрезаем длинные названия
+                    'Склад': warehouse_data['short_name'],
+                    'Город': warehouse_data['city'] or 'общий',
+                    'Остаток': warehouse_data['current_stock'],
+                    'ADS': round(warehouse_data['ads'], 4),
+                    'MIN': round(warehouse_data['min_stock'], 0),
+                    'MAX': round(warehouse_data['max_stock'], 0),
+                    'Статус': warehouse_data['status'],
+                    'К заказу': round(warehouse_data['order_quantity'], 0),
+                    'Месяцев запаса': round(warehouse_data['months_of_stock'], 1) if warehouse_data['months_of_stock'] < 99 else '∞'
+                })
+    
+    if detailed_results:
+        df_results = pd.DataFrame(detailed_results)
+        
+        # Фильтры для таблицы
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            city_filter = st.selectbox("Фильтр по городу:", ['Все'] + list(results_by_city.keys()))
+        with col2:
+            status_filter = st.selectbox("Фильтр по статусу:", ['Все', 'critical', 'warning', 'good', 'excess', 'no_ads'])
+        with col3:
+            warehouse_filter = st.selectbox("Фильтр по складу:", ['Все'] + df_results['Склад'].unique().tolist())
+        
+        # Применяем фильтры
+        filtered_df = df_results.copy()
+        
+        if city_filter != 'Все':
+            filtered_df = filtered_df[filtered_df['Город'] == city_filter]
+        
+        if status_filter != 'Все':
+            filtered_df = filtered_df[filtered_df['Статус'] == status_filter]
+            
+        if warehouse_filter != 'Все':
+            filtered_df = filtered_df[filtered_df['Склад'] == warehouse_filter]
+        
+        st.write(f"Показано записей: {len(filtered_df)} из {len(df_results)}")
+        st.dataframe(filtered_df, use_container_width=True)
+        
+        # Экспорт
+        if st.button("📊 Экспорт результатов в Excel"):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_results.to_excel(writer, sheet_name='Анализ_складов', index=False)
+                
+                # Добавляем сводку по городам
+                summary_data = []
+                for city, data in results_by_city.items():
+                    summary_data.append({
+                        'Город': city,
+                        'Склады': ', '.join(data['warehouses']),
+                        'Критичные': data['critical'],
+                        'Внимание': data['warning'],
+                        'Норма': data['good'],
+                        'Избыток': data['excess'],
+                        'К_заказу': data['total_order']
+                    })
+                
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Сводка_по_городам', index=False)
+            
+            output.seek(0)
+            st.download_button(
+                label="💾 Скачать анализ складов",
+                data=output,
+                file_name=f"warehouse_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )

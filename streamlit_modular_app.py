@@ -138,6 +138,8 @@ def init_system():
         # 🔧 ПОЛНОЕ ИСПРАВЛЕНИЕ ВСЕХ МЕТОДОВ ЗАГРУЗКИ
         apply_complete_fix_to_system(st.session_state.inventory_system)
         add_warehouse_analysis_to_system(st.session_state.inventory_system)
+
+        
     return st.session_state.inventory_system
 
 

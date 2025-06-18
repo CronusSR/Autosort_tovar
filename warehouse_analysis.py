@@ -574,7 +574,66 @@ def warehouse_analysis_page(system):
     """
     Страница анализа остатков по складам с интеграцией ADS магазинов
     """
-    
+    try:
+        import clean_duplicate_ads
+        
+        def fixed_is_combined_data(store_name, filename):
+            combined_indicators = ['calculated_ads', 'общий', 'объединен', 'sales_data', 'combined']
+            store_name_lower = store_name.lower() if store_name else ""
+            filename_lower = filename.lower() if filename else ""
+            return any(indicator in store_name_lower or indicator in filename_lower for indicator in combined_indicators)
+        
+        clean_duplicate_ads.is_combined_data = fixed_is_combined_data
+        
+        original_clean = clean_duplicate_ads.clean_and_organize_store_ads
+        def fixed_clean_and_organize_store_ads(store_ads_by_city):
+            cleaned_data = {'города': {}, 'объединенные': [], 'дополнительные': []}
+            unique_ads_data = {}
+            
+            for category, stores in store_ads_by_city.items():
+                for store in stores:
+                    store_name = store['branch_name']
+                    ads_data = store['ads_data']
+                    filename = store.get('filename', store_name)  # ИСПРАВЛЕНИЕ
+                    
+                    data_id = f"{len(ads_data)}_{hash(store_name) % 1000}"
+                    
+                    if fixed_is_combined_data(store_name, filename):
+                        if data_id not in unique_ads_data:
+                            cleaned_data['объединенные'].append({
+                                'name': 'Объединенные ADS данные',
+                                'description': 'Общие данные продаж по всей сети',
+                                'store_type': 'объединенные',
+                                'ads_data': ads_data,
+                                'items_count': len(ads_data),
+                                'total_ads': ads_data['ads'].sum() if 'ads' in ads_data.columns else 0
+                            })
+                            unique_ads_data[data_id] = 'объединенные'
+                            
+                    elif category in ['алматы', 'шымкент', 'астана']:
+                        if category not in cleaned_data['города']:
+                            cleaned_data['города'][category] = []
+                        
+                        city_data_id = f"{category}_{data_id}"
+                        if city_data_id not in unique_ads_data:
+                            cleaned_data['города'][category].append({
+                                'name': store_name,
+                                'description': f"Данные {store.get('store_type', 'неизвестно')} в г.{category.title()}",
+                                'store_type': store.get('store_type', 'неизвестно'),
+                                'ads_data': ads_data,
+                                'items_count': len(ads_data),
+                                'total_ads': ads_data['ads'].sum() if 'ads' in ads_data.columns else 0,
+                                'filename': filename
+                            })
+                            unique_ads_data[city_data_id] = category
+            
+            return cleaned_data
+        
+        clean_duplicate_ads.clean_and_organize_store_ads = fixed_clean_and_organize_store_ads
+        print("✅ Срочное исправление применено")
+        
+    except:
+        print("⚠️ Используем стандартную обработку")
     st.header("📦 Анализ остатков по складам")
     
     # Инициализация анализатора складов если его нет

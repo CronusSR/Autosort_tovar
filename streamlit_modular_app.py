@@ -85,36 +85,48 @@ def safe_rerun():
     time.sleep(0.1)
     st.rerun()
 def _extract_branch_name(filename: str) -> str:
-    """Извлечение названия филиала из имени файла"""
+    """Улучшенное извлечение названия филиала из имени файла"""
     # Убираем расширение
     name = filename.lower().replace('.xlsx', '').replace('.xls', '')
     
     # Ищем ключевые слова филиалов
     if 'шымкент' in name:
-        if 'скл' in name:
+        if 'скл' in name or 'склад' in name:
             return 'шымкент_склад'
-        elif 'маг' in name:
+        elif 'маг' in name or 'магазин' in name:
             return 'шымкент_магазин'
         else:
-            return 'шымкент'
+            return 'шымкент_магазин'  # по умолчанию магазин если не указано
     elif 'астана' in name:
-        if 'скл' in name:
+        if 'скл' in name or 'склад' in name:
             return 'астана_склад'
         else:
-            return 'астана'
+            return 'астана_магазин'  # по умолчанию магазин
     elif 'барыс' in name:
-        return 'барыс'
+        return 'барыс_магазин'  # Барыс всегда магазин
     elif 'казыб' in name:
-        if 'скл' in name:
+        if 'скл' in name or 'склад' in name:
             return 'казыбаева_склад'
         elif 'тд' in name:
             return 'казыбаева_тд'
         else:
-            return 'казыбаева'
+            return 'казыбаева_магазин'
     else:
         # Если не удалось определить, используем имя файла
         return name.replace(' ', '_').replace('-', '_')
 
+def get_store_type_and_city(branch_name: str) -> tuple:
+    """Определение типа магазина и города из branch_name"""
+    parts = branch_name.split('_')
+    
+    if len(parts) >= 2:
+        city = parts[0]
+        store_type = parts[1]
+    else:
+        city = parts[0] if parts else 'неизвестно'
+        store_type = 'магазин'
+    
+    return city, store_type
 
 def init_system():
     """Инициализация системы с полным исправлением"""
@@ -125,6 +137,326 @@ def init_system():
         apply_complete_fix_to_system(st.session_state.inventory_system)
         add_warehouse_analysis_to_system(st.session_state.inventory_system)
     return st.session_state.inventory_system
+
+def enhance_ads_page_with_multi_store_analysis(system):
+    """
+    ДОБАВЬ ЭТУ ФУНКЦИЮ в streamlit_modular_app.py
+    И ВЫЗОВИ ЕЕ в ads_calculation_page_updated ПОСЛЕ показа основных результатов
+    """
+    
+    # Проверяем есть ли данные по множественным файлам
+    if not hasattr(system, 'multiple_files_data') or not system.multiple_files_data:
+        return
+    
+    st.markdown("---")
+    st.subheader("🏪 Анализ ADS по магазинам отдельно")
+    
+    # Улучшенная функция определения типа магазина
+    def get_enhanced_store_info(branch_name):
+        """Получение детальной информации о магазине"""
+        # Парсим город и тип
+        if 'шымкент' in branch_name.lower():
+            city = 'Шымкент'
+            if 'склад' in branch_name.lower() or 'скл' in branch_name.lower():
+                store_type = 'Склад'
+                icon = '📦'
+            elif 'маг' in branch_name.lower():
+                store_type = 'Магазин'
+                icon = '🏪'
+            else:
+                store_type = 'Магазин'
+                icon = '🏪'
+        elif 'астана' in branch_name.lower():
+            city = 'Астана'
+            if 'склад' in branch_name.lower() or 'скл' in branch_name.lower():
+                store_type = 'Склад'
+                icon = '📦'
+            else:
+                store_type = 'Магазин'
+                icon = '🏪'
+        elif 'барыс' in branch_name.lower():
+            city = 'Барыс'
+            store_type = 'Магазин'
+            icon = '🏪'
+        elif 'казыб' in branch_name.lower():
+            city = 'Казыбаева'
+            if 'склад' in branch_name.lower() or 'скл' in branch_name.lower():
+                store_type = 'Склад'
+                icon = '📦'
+            elif 'тд' in branch_name.lower():
+                store_type = 'ТД'
+                icon = '🏢'
+            else:
+                store_type = 'Магазин'
+                icon = '🏪'
+        else:
+            city = 'Неизвестно'
+            store_type = 'Магазин'
+            icon = '❓'
+        
+        return {
+            'city': city,
+            'type': store_type,
+            'icon': icon,
+            'full_name': f"{icon} {city} - {store_type}"
+        }
+    
+    # Собираем информацию по всем магазинам
+    store_summary = []
+    store_detailed_data = {}
+    
+    for branch_name, file_data in system.multiple_files_data.items():
+        if 'calculated_ads' in file_data and file_data['calculated_ads'] is not None:
+            ads_data = file_data['calculated_ads']
+            store_info = get_enhanced_store_info(branch_name)
+            
+            summary = {
+                'Филиал': branch_name,
+                'Название': store_info['full_name'],
+                'Город': store_info['city'],
+                'Тип': store_info['type'],
+                'Товаров': len(ads_data),
+                'Общие продажи': ads_data['total_sales'].sum() if 'total_sales' in ads_data.columns else 0,
+                'Общий ADS': ads_data['ads'].sum() if 'ads' in ads_data.columns else 0,
+                'Средний ADS': ads_data['ads'].mean() if 'ads' in ads_data.columns else 0,
+                'Максимальный ADS': ads_data['ads'].max() if 'ads' in ads_data.columns else 0
+            }
+            
+            store_summary.append(summary)
+            store_detailed_data[branch_name] = {
+                'info': store_info,
+                'data': ads_data,
+                'summary': summary
+            }
+    
+    if not store_summary:
+        st.info("📝 Нет данных по отдельным магазинам. Загрузите файлы через множественную загрузку.")
+        return
+    
+    # Сводная таблица по всем магазинам
+    st.subheader("📊 Сводка по всем магазинам")
+    
+    summary_df = pd.DataFrame(store_summary)
+    
+    # Основные метрики
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        total_stores = len(summary_df)
+        st.metric("Всего точек", total_stores)
+    with col2:
+        total_items = summary_df['Товаров'].sum()
+        st.metric("Всего товаров", total_items)
+    with col3:
+        total_sales = summary_df['Общие продажи'].sum()
+        st.metric("Общие продажи", f"{total_sales:,.0f}")
+    with col4:
+        avg_ads_all = summary_df['Общий ADS'].sum() / total_stores if total_stores > 0 else 0
+        st.metric("Средний ADS", f"{avg_ads_all:.4f}")
+    
+    # Таблица с детальными данными
+    st.dataframe(summary_df[['Название', 'Товаров', 'Общие продажи', 'Общий ADS', 'Средний ADS']], 
+                use_container_width=True)
+    
+    # Анализ по типам точек
+    st.subheader("🏢 Анализ по типам точек")
+    
+    type_analysis = summary_df.groupby('Тип').agg({
+        'Товаров': 'sum',
+        'Общие продажи': 'sum',
+        'Общий ADS': 'sum'
+    }).reset_index()
+    
+    type_analysis['Количество точек'] = summary_df.groupby('Тип').size().values
+    type_analysis['Средние продажи на точку'] = type_analysis['Общие продажи'] / type_analysis['Количество точек']
+    
+    st.dataframe(type_analysis, use_container_width=True)
+    
+    # График продаж по типам
+    if len(type_analysis) > 1:
+        fig_types = px.bar(
+            type_analysis,
+            x='Тип',
+            y='Общие продажи',
+            title="Продажи по типам точек",
+            color='Тип',
+            text='Общие продажи'
+        )
+        fig_types.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
+        st.plotly_chart(fig_types, use_container_width=True)
+    
+    # Анализ по городам
+    st.subheader("🌍 Анализ по городам")
+    
+    city_analysis = summary_df.groupby('Город').agg({
+        'Товаров': 'sum',
+        'Общие продажи': 'sum',
+        'Общий ADS': 'sum'
+    }).reset_index()
+    
+    city_analysis['Количество точек'] = summary_df.groupby('Город').size().values
+    
+    # График по городам
+    if len(city_analysis) > 1:
+        fig_cities = px.pie(
+            city_analysis,
+            values='Общие продажи',
+            names='Город',
+            title="Распределение продаж по городам"
+        )
+        st.plotly_chart(fig_cities, use_container_width=True)
+    
+    # Детальный анализ по каждому магазину
+    st.subheader("🔍 Детальный анализ по магазинам")
+    
+    # Выбор магазина для детального просмотра
+    selected_store = st.selectbox(
+        "Выберите магазин для детального анализа:",
+        options=list(store_detailed_data.keys()),
+        format_func=lambda x: store_detailed_data[x]['info']['full_name']
+    )
+    
+    if selected_store and selected_store in store_detailed_data:
+        store_data = store_detailed_data[selected_store]
+        store_info = store_data['info']
+        ads_data = store_data['data']
+        summary = store_data['summary']
+        
+        # Информация о выбранном магазине
+        st.write(f"### {store_info['full_name']}")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Товаров", summary['Товаров'])
+        with col2:
+            st.metric("Общие продажи", f"{summary['Общие продажи']:,.0f}")
+        with col3:
+            st.metric("Общий ADS", f"{summary['Общий ADS']:.2f}")
+        with col4:
+            st.metric("Средний ADS", f"{summary['Средний ADS']:.4f}")
+        
+        # ABC анализ для выбранного магазина
+        if len(ads_data) > 0 and 'total_sales' in ads_data.columns:
+            st.write("**🔤 ABC анализ для магазина:**")
+            
+            # Рассчитываем ABC для этого магазина
+            ads_sorted = ads_data.sort_values('total_sales', ascending=False).copy()
+            total_sales_store = ads_sorted['total_sales'].sum()
+            
+            if total_sales_store > 0:
+                ads_sorted['cumulative_sales'] = ads_sorted['total_sales'].cumsum()
+                ads_sorted['cumulative_percent'] = (ads_sorted['cumulative_sales'] / total_sales_store) * 100
+                ads_sorted['abc_category'] = ads_sorted['cumulative_percent'].apply(
+                    lambda x: 'A' if x <= 80 else ('B' if x <= 95 else 'C')
+                )
+                
+                # Статистика ABC
+                abc_counts = ads_sorted['abc_category'].value_counts()
+                
+                abc_col1, abc_col2, abc_col3 = st.columns(3)
+                with abc_col1:
+                    st.metric("🔴 A товары", abc_counts.get('A', 0))
+                with abc_col2:
+                    st.metric("🟡 B товары", abc_counts.get('B', 0))
+                with abc_col3:
+                    st.metric("🟢 C товары", abc_counts.get('C', 0))
+        
+        # Топ товары магазина
+        st.write("**🏆 Топ-10 товаров по продажам:**")
+        if 'total_sales' in ads_data.columns:
+            top_items = ads_data.nlargest(10, 'total_sales')[['номенклатура', 'total_sales', 'ads']]
+            st.dataframe(top_items, use_container_width=True)
+        
+        # График распределения ADS для магазина
+        if 'ads' in ads_data.columns and len(ads_data) > 1:
+            fig_dist = px.histogram(
+                ads_data,
+                x='ads',
+                nbins=30,
+                title=f"Распределение ADS - {store_info['full_name']}"
+            )
+            st.plotly_chart(fig_dist, use_container_width=True)
+    
+    # Сравнительный анализ между магазинами
+    st.subheader("⚖️ Сравнительный анализ")
+    
+    if len(store_summary) > 1:
+        # График сравнения эффективности
+        fig_compare = go.Figure()
+        
+        # Добавляем метрики для каждого магазина
+        for _, row in summary_df.iterrows():
+            fig_compare.add_trace(go.Scatter(
+                x=[row['Товаров']],
+                y=[row['Средний ADS']],
+                mode='markers+text',
+                marker=dict(
+                    size=max(10, row['Общие продажи'] / 10000),  # Размер зависит от продаж
+                    color=row['Общие продажи'],
+                    colorscale='Viridis',
+                    showscale=True
+                ),
+                text=row['Название'],
+                textposition="top center",
+                name=row['Название']
+            ))
+        
+        fig_compare.update_layout(
+            title="Сравнение магазинов: Количество товаров vs Средний ADS",
+            xaxis_title="Количество товаров",
+            yaxis_title="Средний ADS",
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig_compare, use_container_width=True)
+        
+        # Рейтинг магазинов
+        st.write("**📈 Рейтинг магазинов по эффективности:**")
+        
+        ranking_df = summary_df.copy()
+        ranking_df['Эффективность'] = (
+            ranking_df['Общий ADS'] * 0.4 + 
+            (ranking_df['Общие продажи'] / ranking_df['Товаров']) * 0.6
+        )
+        ranking_df = ranking_df.sort_values('Эффективность', ascending=False)
+        
+        for i, (_, row) in enumerate(ranking_df.iterrows(), 1):
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            st.write(f"{medal} **{row['Название']}** - Эффективность: {row['Эффективность']:.2f}")
+    
+    # Экспорт результатов по магазинам
+    st.subheader("📤 Экспорт анализа по магазинам")
+    
+    if st.button("📊 Создать отчет по магазинам", key="export_multi_store"):
+        with st.spinner("Создание отчета..."):
+            output = io.BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # Сводка по магазинам
+                summary_df.to_excel(writer, sheet_name='Сводка_магазинов', index=False)
+                
+                # Анализ по типам
+                type_analysis.to_excel(writer, sheet_name='Анализ_по_типам', index=False)
+                
+                # Анализ по городам  
+                city_analysis.to_excel(writer, sheet_name='Анализ_по_городам', index=False)
+                
+                # Данные по каждому магазину
+                for branch_name, store_data in store_detailed_data.items():
+                    sheet_name = f"{branch_name}"[:31]  # Ограничение Excel на длину имени
+                    store_data['data'].to_excel(writer, sheet_name=sheet_name, index=False)
+            
+            output.seek(0)
+            
+            st.download_button(
+                label="💾 Скачать отчет по магазинам",
+                data=output,
+                file_name=f"ads_analysis_by_stores_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            st.success("✅ Отчет готов к скачиванию!")
+
+
 
 def max_stock_page(system):
     """Исправленная страница для работы с новыми максимальными остатками"""
@@ -834,6 +1166,9 @@ def ads_calculation_page_updated(system):
     except Exception as e:
         st.error(f"Ошибка загрузки множественных файлов: {e}")
 
+    # Показываем анализ по магазинам если есть множественные файлы
+    enhance_ads_page_with_multi_store_analysis(system)
+    
     st.markdown("""
     **🔢 ФОРМУЛА ADS:**
     - **Номенклатура:** Читается из колонки B 
@@ -1084,6 +1419,7 @@ def ads_calculation_page_updated(system):
             auto_fix_ads_zero_and_show_result(system)
         except ImportError:
             pass
+        
 
 def show_ads_comparison(old_ads_data, new_ads_data):
     """Функция для сравнения старых и новых результатов ADS"""
@@ -1633,6 +1969,8 @@ def export_page(system):
         ✨ = Новые разделы
         """)
         
+
+
 def settings_page(system):
     """Страница настроек"""
     st.header("⚙️ Настройки системы")
@@ -1927,7 +2265,225 @@ def main():
     
     with col3:
         st.caption(f"Система v2.0 | SIRIUS {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
-
+        
+    def multi_store_ads_page(system):
+        """Страница для анализа ADS по нескольким магазинам"""
+        
+        st.header("🏪 ADS анализ по магазинам")
+        
+        st.markdown("""
+        **Загружайте файлы продаж из разных магазинов и складов.**
+        Система автоматически определит тип точки по названию файла.
+        """)
+        
+        # Загрузка нескольких файлов
+        uploaded_files = st.file_uploader(
+            "Выберите файлы продаж:",
+            type=['xlsx', 'xls'],
+            accept_multiple_files=True,
+            help="Файлы должны иметь названия типа: 'астана скл - продажи.xlsx', 'шымкент маг - продажи.xlsx'"
+        )
+        
+        if uploaded_files:
+            st.success(f"📁 Загружено файлов: {len(uploaded_files)}")
+            
+            # Анализ названий файлов
+            with st.expander("🔍 Анализ названий файлов", expanded=True):
+                file_info = []
+                for file in uploaded_files:
+                    branch_name = _extract_branch_name(file.name)
+                    city, store_type = get_store_type_and_city(branch_name)
+                    
+                    file_info.append({
+                        'Файл': file.name,
+                        'Филиал ID': branch_name,
+                        'Город': city,
+                        'Тип': store_type
+                    })
+                
+                df_info = pd.DataFrame(file_info)
+                st.dataframe(df_info, use_container_width=True)
+                
+                # Статистика
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("🏪 Магазины", len(df_info[df_info['Тип'] == 'магазин']))
+                with col2:
+                    st.metric("📦 Склады", len(df_info[df_info['Тип'] == 'склад']))
+                with col3:
+                    st.metric("🏢 ТД", len(df_info[df_info['Тип'] == 'тд']))
+            
+            # Обработка файлов
+            if st.button("🚀 Обработать все файлы", type="primary"):
+                
+                with st.spinner("Обработка файлов..."):
+                    
+                    # Словарь для хранения результатов по каждому магазину
+                    store_results = {}
+                    combined_ads = []
+                    
+                    for file in uploaded_files:
+                        try:
+                            branch_name = _extract_branch_name(file.name)
+                            city, store_type = get_store_type_and_city(branch_name)
+                            
+                            # Загружаем файл продаж используя существующий метод
+                            result = system.load_sales_file_updated(file)
+                            
+                            if result['success']:
+                                # Добавляем информацию о магазине к каждому товару
+                                ads_data = system.calculated_ads.copy()
+                                ads_data['store_id'] = branch_name
+                                ads_data['city'] = city
+                                ads_data['store_type'] = store_type
+                                ads_data['store_name'] = f"{city.title()} {store_type.title()}"
+                                
+                                store_results[branch_name] = {
+                                    'data': ads_data,
+                                    'city': city,
+                                    'store_type': store_type,
+                                    'total_sales': ads_data['total_sales'].sum(),
+                                    'total_ads': ads_data['ads'].sum(),
+                                    'items_count': len(ads_data)
+                                }
+                                
+                                combined_ads.append(ads_data)
+                                
+                                st.success(f"✅ {file.name} - обработано товаров: {len(ads_data)}")
+                            else:
+                                st.error(f"❌ Ошибка обработки {file.name}: {result.get('error', 'Неизвестная ошибка')}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Критическая ошибка при обработке {file.name}: {str(e)}")
+                    
+                    # Сохраняем результаты в session_state
+                    if store_results:
+                        st.session_state.multi_store_results = store_results
+                        st.session_state.combined_ads = pd.concat(combined_ads, ignore_index=True)
+                        
+                        st.success(f"✅ Успешно обработано магазинов: {len(store_results)}")
+        
+        # Показываем результаты если они есть
+        if hasattr(st.session_state, 'multi_store_results'):
+            
+            st.markdown("---")
+            st.subheader("📊 Результаты анализа")
+            
+            store_results = st.session_state.multi_store_results
+            
+            # Общая статистика
+            total_stores = len(store_results)
+            total_items = sum(r['items_count'] for r in store_results.values())
+            total_sales = sum(r['total_sales'] for r in store_results.values())
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Всего магазинов", total_stores)
+            with col2:
+                st.metric("Всего товаров", total_items)
+            with col3:
+                st.metric("Общие продажи", f"{total_sales:,.0f}")
+            
+            # Анализ по типам магазинов
+            st.subheader("🏢 Анализ по типам")
+            
+            type_summary = {}
+            for store_id, data in store_results.items():
+                store_type = data['store_type']
+                if store_type not in type_summary:
+                    type_summary[store_type] = {'count': 0, 'sales': 0, 'items': 0}
+                
+                type_summary[store_type]['count'] += 1
+                type_summary[store_type]['sales'] += data['total_sales']
+                type_summary[store_type]['items'] += data['items_count']
+            
+            type_df = pd.DataFrame([
+                {
+                    'Тип': type_name,
+                    'Количество': data['count'],
+                    'Общие продажи': data['sales'],
+                    'Товаров': data['items'],
+                    'Средние продажи': data['sales'] / data['count']
+                }
+                for type_name, data in type_summary.items()
+            ])
+            
+            st.dataframe(type_df, use_container_width=True)
+            
+            # График продаж по типам
+            fig = px.bar(type_df, x='Тип', y='Общие продажи', 
+                         title="Продажи по типам точек")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Детальный анализ по каждому магазину
+            st.subheader("🔍 Анализ по магазинам")
+            
+            # Создаем вкладки для каждого магазина
+            store_tabs = st.tabs([f"{store_id}" for store_id in store_results.keys()])
+            
+            for i, (store_id, store_data) in enumerate(store_results.items()):
+                with store_tabs[i]:
+                    
+                    # Информация о магазине
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Тип", store_data['store_type'].title())
+                    with col2:
+                        st.metric("Город", store_data['city'].title())
+                    with col3:
+                        st.metric("Товаров", store_data['items_count'])
+                    with col4:
+                        st.metric("Продажи", f"{store_data['total_sales']:,.0f}")
+                    
+                    # Топ товары
+                    ads_data = store_data['data']
+                    top_items = ads_data.nlargest(10, 'ads')[['номенклатура', 'ads', 'total_sales']]
+                    
+                    st.write("**🏆 Топ-10 товаров:**")
+                    st.dataframe(top_items, use_container_width=True)
+            
+            # Экспорт
+            st.subheader("📤 Экспорт результатов")
+            
+            if st.button("📊 Создать Excel отчет"):
+                
+                with st.spinner("Создание отчета..."):
+                    output = io.BytesIO()
+                    
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        # Сводка
+                        summary_data = []
+                        for store_id, data in store_results.items():
+                            summary_data.append({
+                                'Магазин_ID': store_id,
+                                'Город': data['city'],
+                                'Тип': data['store_type'],
+                                'Товаров': data['items_count'],
+                                'Общие_продажи': data['total_sales'],
+                                'Общий_ADS': data['total_ads']
+                            })
+                        
+                        pd.DataFrame(summary_data).to_excel(writer, sheet_name='Сводка_магазинов', index=False)
+                        
+                        # Данные по каждому магазину
+                        for store_id, data in store_results.items():
+                            sheet_name = store_id[:31]  # Ограничение Excel
+                            data['data'].to_excel(writer, sheet_name=sheet_name, index=False)
+                        
+                        # Объединенные данные
+                        if hasattr(st.session_state, 'combined_ads'):
+                            st.session_state.combined_ads.to_excel(writer, sheet_name='Все_магазины', index=False)
+                    
+                    output.seek(0)
+                    
+                    st.download_button(
+                        label="💾 Скачать отчет по магазинам",
+                        data=output,
+                        file_name=f"multi_store_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    st.success("✅ Отчет готов к скачиванию!")
 def max_stock_page(system):
     """Окончательно исправленная страница для работы с новыми максимальными остатками"""
     st.header("📦 Новые максимальные остатки")

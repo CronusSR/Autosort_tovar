@@ -572,15 +572,12 @@ def add_warehouse_analysis_to_system(system):
 # ⚠️ ВАЖНО: Эта функция должна быть НА ЭТОМ УРОВНЕ, не внутри предыдущей!
 def warehouse_analysis_page(system):
     """
-    Страница анализа остатков по складам с интеграцией ADS магазинов
+    ПОЛНАЯ страница анализа остатков по складам с детальным анализом каждого склада
     """
     
-    st.header("📦 Анализ остатков по складам")
+    st.header("📦 Детальный анализ остатков по складам")
     
-    # 🚨 ПРОСТОЕ ИСПРАВЛЕНИЕ ARROW ОШИБКИ
-    import pandas as pd
-    
-    # Переопределяем st.dataframe только один раз
+    # 🚨 ИСПРАВЛЕНИЕ ARROW ОШИБКИ
     if 'safe_dataframe_applied' not in st.session_state:
         st.session_state.safe_dataframe_applied = True
         
@@ -589,7 +586,6 @@ def warehouse_analysis_page(system):
         def safe_dataframe(data, **kwargs):
             if isinstance(data, pd.DataFrame) and not data.empty:
                 data_copy = data.copy()
-                # Исправляем проблемные колонки
                 for col in data_copy.columns:
                     if data_copy[col].dtype == 'object':
                         data_copy[col] = data_copy[col].astype(str)
@@ -598,17 +594,31 @@ def warehouse_analysis_page(system):
                 try:
                     return original_dataframe(data_copy, **kwargs)
                 except:
-                    # Если все еще ошибка, показываем как HTML
                     st.markdown(data_copy.to_html(escape=False), unsafe_allow_html=True)
             else:
                 return original_dataframe(data, **kwargs)
         
         st.dataframe = safe_dataframe
     
-    # 🚨 ПРОСТОЕ ИСПРАВЛЕНИЕ ADS ИНТЕГРАЦИИ  
+    # 🔧 ВОССТАНОВЛЕНИЕ ДЕТАЛЬНОГО АНАЛИЗАТОРА СКЛАДОВ
+    try:
+        from restore_detailed_warehouse_analysis import (
+            restore_original_warehouse_analysis_to_system, 
+            display_detailed_warehouse_analysis
+        )
+        
+        # Инициализируем детальный анализатор если его нет
+        if not hasattr(system, 'warehouse_analyzer') or not hasattr(system.warehouse_analyzer, 'warehouse_config'):
+            restore_original_warehouse_analysis_to_system(system)
+            st.success("✅ Детальный анализатор складов инициализирован")
+            
+    except ImportError:
+        st.error("❌ Файл restore_detailed_warehouse_analysis.py не найден. Добавьте его в проект.")
+        return
+    
+    # 🚨 ФУНКЦИЯ ПОИСКА ADS ДАННЫХ
     def simple_integrate_ads(system):
         """Простая функция поиска ADS данных"""
-        
         result = {}
         
         # Ищем в multiple_files_data
@@ -617,7 +627,6 @@ def warehouse_analysis_page(system):
                 processed = system.multiple_files_data['processed_results']
                 
                 for filename, data in processed.items():
-                    # Ищем ADS
                     ads_df = None
                     
                     if isinstance(data, dict):
@@ -630,7 +639,7 @@ def warehouse_analysis_page(system):
                         ads_df = data
                     
                     if ads_df is not None:
-                        # Простое определение города
+                        # Определяем город
                         city = 'общие'
                         filename_lower = filename.lower()
                         
@@ -638,7 +647,7 @@ def warehouse_analysis_page(system):
                             city = 'шымкент'
                         elif 'астана' in filename_lower:
                             city = 'астана'
-                        elif 'алматы' in filename_lower or 'барыс' in filename_lower or 'казыбаева' in filename_lower:
+                        elif any(word in filename_lower for word in ['алматы', 'барыс', 'казыбаева']):
                             city = 'алматы'
                         
                         if city not in result:
@@ -666,19 +675,13 @@ def warehouse_analysis_page(system):
         
         return result if result else None
     
-    # Инициализация анализатора складов если его нет
-    if not hasattr(system, 'warehouse_analyzer'):
-        system.warehouse_analyzer = WarehouseAnalyzer()
-        print("✅ Анализатор складов инициализирован")
-    
-    # ИСПОЛЬЗУЕМ ПРОСТУЮ ФУНКЦИЮ ИНТЕГРАЦИИ
+    # Получаем ADS данные
     store_ads_by_city = simple_integrate_ads(system)
     
     if store_ads_by_city:
         st.success(f"✅ Найдены ADS данные по {len(store_ads_by_city)} источникам")
         
-        # Показываем какие данные найдены
-        with st.expander("🌍 Найденные ADS данные", expanded=True):
+        with st.expander("🌍 Найденные ADS данные"):
             for city, stores in store_ads_by_city.items():
                 st.write(f"**{city.title()}:** {len(stores)} источников")
                 for store in stores:
@@ -689,123 +692,155 @@ def warehouse_analysis_page(system):
         st.warning("⚠️ Нет данных ADS по магазинам. Загрузите файлы продаж в разделе 'ADS анализ по магазинам'")
         return
     
-
-    # Параметры анализа
-    st.subheader("⚙️ Параметры анализа")
+    # Настройки параметров анализа
+    st.subheader("⚙️ Параметры детального анализа")
     
     col1, col2 = st.columns(2)
-    
     with col1:
-        st.markdown("**📉 Минимальные запасы**")
-        min_days = st.slider(
-            "Дни MIN запаса:",
-            min_value=5,
-            max_value=60,
-            value=15,
-            step=5,
-            help="MIN запас = ADS × количество дней"
-        )
-        st.info(f"💡 Пример: ADS=5, дни={min_days} → MIN={5 * min_days}")
-    
+        min_days = st.number_input("Минимальные дни запаса:", min_value=5, max_value=60, value=10)
     with col2:
-        st.markdown("**📈 Максимальные запасы**")
-        max_days = st.slider(
-            "Дни MAX запаса:",
-            min_value=min_days + 5,
-            max_value=180,
-            value=45,
-            step=5,
-            help="MAX запас = ADS × количество дней"
-        )
-        st.info(f"💡 Пример: ADS=5, дни={max_days} → MAX={5 * max_days}")
-    
-    # Показываем формулы
-    st.markdown(f"""
-    **📊 Формулы расчета:**
-    - **MIN запас** = ADS × {min_days} дней
-    - **MAX запас** = ADS × {max_days} дней
-    - **Рабочий диапазон** = {max_days - min_days} дней
-    """)
-    
-    st.divider()
+        max_days = st.number_input("Максимальные дни запаса:", min_value=20, max_value=120, value=50)
     
     # Загрузка файла остатков
-    st.subheader("📂 Загрузка файла остатков")
+    st.subheader("📂 Загрузка данных остатков")
     
-    remains_file = st.file_uploader(
-        "Выберите файл остатков (Excel)",
+    uploaded_file = st.file_uploader(
+        "Выберите файл остатков:",
         type=['xlsx', 'xls'],
-        help="Файл должен содержать заголовки складов в 7й строке и данные товаров начиная с 10й строки"
+        help="Файл должен содержать колонки с остатками по каждому складу"
     )
     
-    if remains_file is not None:
-        with st.spinner("Обработка файла остатков..."):
-            try:
-                # Читаем Excel файл
-                file_data = pd.read_excel(remains_file, header=None)
-                file_data = file_data.values.tolist()
+    if uploaded_file:
+        try:
+            # Читаем файл
+            if uploaded_file.name.endswith('.xlsx'):
+                remains_df = pd.read_excel(uploaded_file)
+            else:
+                remains_df = pd.read_excel(uploaded_file, engine='xlrd')
+            
+            st.success(f"✅ Файл загружен: {len(remains_df)} товаров")
+            
+            # Показываем превью данных
+            with st.expander("👀 Превью данных остатков"):
+                st.dataframe(remains_df.head(10), use_container_width=True)
+            
+            # Показываем найденные склады
+            warehouse_cols = [col for col in remains_df.columns if 'остаток' in col.lower()]
+            
+            with st.expander("🏪 Найденные склады в файле"):
+                st.write(f"**Найдено складов: {len(warehouse_cols)}**")
+                for col in warehouse_cols:
+                    warehouse_name = col.replace('_остаток', '').replace(' остаток', '')
+                    total_stock = remains_df[col].sum()
+                    items_with_stock = (remains_df[col] > 0).sum()
+                    st.write(f"- **{warehouse_name}**: {total_stock:,.0f} единиц на {items_with_stock} товарах")
+            
+            # 🚨 ИСПРАВЛЕНИЕ ОТСУТСТВУЮЩЕГО МЕТОДА
+            if not hasattr(system, 'analyze_warehouse_stock_with_details'):
                 
-                st.info(f"📊 Файл прочитан: {len(file_data)} строк")
-                
-                # Показываем заголовки складов из 7й строки
-                if len(file_data) > 6:
-                    header_row = file_data[6]
-                    st.info(f"📋 7я строка (заголовки складов): {header_row[:5] if header_row else 'Пустая'}...")
-                
-                # Парсим остатки
-                remains_df = system.warehouse_analyzer.parse_remains_file(file_data)
-                
-                if remains_df is not None and not remains_df.empty:
-                    st.success(f"✅ Файл обработан! Найдено {len(remains_df)} товаров")
+                def analyze_warehouse_stock_with_details(remains_df, ads_data, store_ads_by_city, min_days=10, max_days=50):
+                    """Анализ складов с полными деталями"""
                     
-                    # Показываем превью данных
-                    with st.expander("👀 Превью данных остатков"):
-                        st.dataframe(remains_df.head(10), use_container_width=True)
+                    try:
+                        # Если нет анализатора, создаем его
+                        if not hasattr(system, 'warehouse_analyzer'):
+                            from restore_detailed_warehouse_analysis import DetailedWarehouseAnalyzer
+                            system.warehouse_analyzer = DetailedWarehouseAnalyzer()
+                        
+                        # Запускаем детальный анализ
+                        analysis = system.warehouse_analyzer.analyze_warehouse_stock_detailed(
+                            remains_df, ads_data, store_ads_by_city, min_days, max_days
+                        )
+                        
+                        if analysis:
+                            recommendations = system.warehouse_analyzer.get_warehouse_recommendations()
+                            return analysis, recommendations
+                        
+                        return None, None
+                        
+                    except Exception as e:
+                        st.error(f"❌ Ошибка анализа: {str(e)}")
+                        return None, None
+                
+                # Добавляем метод к системе
+                system.analyze_warehouse_stock_with_details = analyze_warehouse_stock_with_details
+                st.info("🔧 Метод анализа добавлен к системе")
+            
+            # Кнопка детального анализа
+            if st.button("🔍 Запустить детальный анализ складов", type="primary"):
+                with st.spinner("🔄 Выполняется детальный анализ каждого склада..."):
                     
-                    # Показываем статистику по складам
-                    with st.expander("📊 Статистика по складам"):
-                        for warehouse_key, config in system.warehouse_analyzer.warehouse_config.items():
-                            col_name = f'{warehouse_key}_остаток'
-                            if col_name in remains_df.columns:
-                                total_stock = remains_df[col_name].sum()
-                                items_with_stock = (remains_df[col_name] > 0).sum()
-                                st.write(f"**{config['short_name']}**: {total_stock:,.0f} единиц на {items_with_stock} товарах")
-                    
-                    # Кнопка анализа
-                    if st.button("🔍 Проанализировать остатки по складам", type="primary"):
-                        with st.spinner("Анализ остатков с учетом ADS магазинов..."):
+                    try:
+                        # Получаем ADS данные для анализа
+                        ads_data = system.calculated_ads if hasattr(system, 'calculated_ads') else None
+                        
+                        # ПРОСТОЙ АНАЛИЗ БЕЗ СЛОЖНЫХ КЛАССОВ
+                        analysis_results = simple_warehouse_analysis(remains_df, ads_data, min_days, max_days)
+                        
+                        if analysis_results:
+                            st.success("✅ Анализ складов завершен!")
                             
-                            if store_ads_by_city:
-                                # Используем новый метод с интеграцией магазинов
-                                analysis = system.warehouse_analyzer.analyze_warehouse_with_store_integration(
-                                    remains_df, store_ads_by_city, min_days, max_days
-                                )
-                                
-                                if analysis:
-                                    st.success("✅ Анализ складов завершен с учетом ADS магазинов!")
-                                    display_enhanced_warehouse_results(analysis, store_ads_by_city)
-                                else:
-                                    st.error("❌ Ошибка анализа остатков")
-                            else:
-                                # Используем старый метод если нет данных магазинов
-                                ads_data = system.calculated_ads if hasattr(system, 'calculated_ads') else None
-                                analysis = system.warehouse_analyzer.analyze_warehouse_stock(
-                                    remains_df, ads_data, min_days, max_days
-                                )
-                                
-                                if analysis:
-                                    st.success("✅ Анализ складов завершен!")
-                                    # Используем старое отображение результатов
-                                    st.warning("⚠️ Анализ выполнен без привязки к городам")
-                                else:
-                                    st.error("❌ Ошибка анализа остатков")
-                else:
-                    st.error("❌ Не удалось обработать файл остатков")
-                    
-            except Exception as e:
-                st.error(f"❌ Ошибка: {str(e)}")
-                with st.expander("🔍 Подробности ошибки"):
-                    st.code(traceback.format_exc())
+                            # Отображаем простые результаты
+                            display_simple_warehouse_results(analysis_results)
+                            
+                            # Простой экспорт
+                            st.subheader("📤 Экспорт результатов")
+                            if st.button("📊 Экспорт результатов в Excel"):
+                                export_simple_results(analysis_results)
+                        else:
+                            st.error("❌ Ошибка при выполнении анализа")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Ошибка анализа: {str(e)}")
+                        
+        except Exception as e:
+            st.error(f"❌ Ошибка при чтении файла: {str(e)}")
+    
+    # Информация о функционале
+    with st.expander("ℹ️ О детальном анализе складов"):
+        st.markdown("""
+        ### 🎯 Что делает детальный анализ:
+        
+        1. **Анализирует каждый склад индивидуально**
+           - Рассчитывает MIN/MAX запасы для каждого склада
+           - Определяет статус каждого товара на каждом складе
+           - Показывает денежные метрики (если есть цены)
+        
+        2. **Категоризирует товары по статусам:**
+           - 🔴 **Критичные**: остаток < 50% от MIN
+           - 🟡 **Внимание**: остаток < MIN
+           - 🟢 **Норма**: остаток между MIN и MAX
+           - 🔵 **Избыток**: остаток > MAX
+        
+        3. **Предоставляет детальную информацию:**
+           - Количество месяцев запаса
+           - Стоимость дефицита и заказов
+           - Рекомендации по каждому складу отдельно
+           - Сравнение складов между собой
+        
+        4. **Экспортирует полные отчеты:**
+           - Сводка по всем складам
+           - Детальные данные по каждому складу (отдельные листы)
+           - Полный анализ всех товаров
+           - Денежные расчеты и приоритизация
+        
+        ### 💰 Работа с ценами:
+        
+        Если в ADS данных есть цены (колонка "Посл. закупка"), система автоматически:
+        - Рассчитывает стоимость дефицита в деньгах
+        - Приоритизирует товары по денежному дефициту  
+        - Показывает стоимость заказов и остатков
+        - Добавляет денежные метрики в отчеты
+        
+        ### 🏪 Поддерживаемые склады:
+        
+        - **База Склад Фурнитура Комплект** (Главный хаб, Алматы)
+        - **Казыбаева Склад/ТД** (Алматы)
+        - **Барыс Склад** (Алматы)
+        - **АО Склад** (Алматы, кромочные материалы)
+        - **Шымкент Склад/Магазин** (Шымкент)
+        - **Астана Склад/Магазин** (Астана)
+        """)
 
 def display_warehouse_analysis_results(dashboard_data, recommendations, analysis):
     """Отображает результаты анализа складов с MIN/MAX запасами"""
@@ -1796,3 +1831,448 @@ def display_enhanced_warehouse_results(analysis, store_ads_by_city):
                 file_name=f"warehouse_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+def simple_warehouse_analysis(remains_df, ads_data, min_days=10, max_days=50):
+    """
+    Простой анализ складов без сложных классов
+    """
+    
+    if remains_df is None or remains_df.empty:
+        return None
+    
+    # Конфигурация складов
+    warehouse_config = {
+        'База Склад Фурнитура Комплект': {
+            'short_name': 'База Комплект',
+            'city': 'алматы',
+            'type': 'hub'
+        },
+        'Казыбаева Склад Фурнитура TRADE': {
+            'short_name': 'Казыбаева Склад',
+            'city': 'алматы',
+            'type': 'warehouse'
+        },
+        'ТД Казыбаева ФУРНИТУРА магазин': {
+            'short_name': 'Казыбаева ТД',
+            'city': 'алматы',
+            'type': 'store'
+        },
+        'Барыс Склад Фурнитура TRADE': {
+            'short_name': 'Барыс',
+            'city': 'алматы',
+            'type': 'store_warehouse'
+        },
+        'АО Склад Фурнитура TRADE': {
+            'short_name': 'АО Склад',
+            'city': 'алматы',
+            'type': 'specialized_store'
+        },
+        '4 Склад фурнитуры АЗМ Шымкент "Овощная база"': {
+            'short_name': 'Шымкент Склад',
+            'city': 'шымкент',
+            'type': 'warehouse'
+        },
+        '6 Склад фурнитуры "Овощная база" Магазин': {
+            'short_name': 'Шымкент Магазин',
+            'city': 'шымкент',
+            'type': 'store'
+        },
+        'склад фурнитура № 1': {
+            'short_name': 'Астана Склад',
+            'city': 'астана',
+            'type': 'warehouse'
+        },
+        'Магазин фурнитуры': {
+            'short_name': 'Астана Магазин',
+            'city': 'астана',
+            'type': 'store'
+        }
+    }
+    
+    results = []
+    print(f"🔄 Начинаем анализ {len(remains_df)} товаров")
+    
+    for _, item in remains_df.iterrows():
+        item_name = item['номенклатура']
+        
+        # Получаем ADS для товара
+        ads_value = 0
+        item_price = 0
+        
+        if ads_data is not None and not ads_data.empty:
+            ads_match = ads_data[ads_data['номенклатура'] == item_name]
+            if not ads_match.empty:
+                ads_value = ads_match.iloc[0].get('ads', 0)
+                # Проверяем наличие цен
+                price_columns = ['last_purchase_price', 'цена', 'price', 'стоимость', 'закупочная_цена']
+                for col in price_columns:
+                    if col in ads_match.columns:
+                        item_price = ads_match.iloc[0].get(col, 0)
+                        break
+        
+        item_result = {
+            'номенклатура': item_name,
+            'ads': ads_value,
+            'price': item_price,
+            'warehouses': []
+        }
+        
+        # Анализируем каждый склад
+        for col in remains_df.columns:
+            if 'остаток' in col.lower():
+                # Извлекаем название склада
+                warehouse_name = col.replace('_остаток', '').replace(' остаток', '').strip()
+                
+                # Ищем конфигурацию склада по ключевым словам
+                config = None
+                for full_name, conf in warehouse_config.items():
+                    # Проверяем точное совпадение или вхождение ключевых слов
+                    if (warehouse_name.lower() == full_name.lower() or
+                        any(word.lower() in warehouse_name.lower() for word in full_name.split() if len(word) > 3)):
+                        config = conf.copy()
+                        config['full_name'] = full_name
+                        break
+                
+                # Если не нашли точное совпадение, пробуем по ключевым словам
+                if not config:
+                    warehouse_lower = warehouse_name.lower()
+                    if 'база' in warehouse_lower and 'комплект' in warehouse_lower:
+                        config = warehouse_config['База Склад Фурнитура Комплект'].copy()
+                        config['full_name'] = warehouse_name
+                    elif 'казыбаева' in warehouse_lower:
+                        if 'тд' in warehouse_lower or 'магазин' in warehouse_lower:
+                            config = warehouse_config['ТД Казыбаева ФУРНИТУРА магазин'].copy()
+                        else:
+                            config = warehouse_config['Казыбаева Склад Фурнитура TRADE'].copy()
+                        config['full_name'] = warehouse_name
+                    elif 'барыс' in warehouse_lower:
+                        config = warehouse_config['Барыс Склад Фурнитура TRADE'].copy()
+                        config['full_name'] = warehouse_name
+                    elif 'ао' in warehouse_lower:
+                        config = warehouse_config['АО Склад Фурнитура TRADE'].copy()
+                        config['full_name'] = warehouse_name
+                    elif 'шымкент' in warehouse_lower or 'овощная' in warehouse_lower:
+                        if 'магазин' in warehouse_lower:
+                            config = warehouse_config['6 Склад фурнитуры "Овощная база" Магазин'].copy()
+                        else:
+                            config = warehouse_config['4 Склад фурнитуры АЗМ Шымкент "Овощная база"'].copy()
+                        config['full_name'] = warehouse_name
+                    elif 'астана' in warehouse_lower:
+                        if 'магазин' in warehouse_lower:
+                            config = warehouse_config['Магазин фурнитуры'].copy()
+                        else:
+                            config = warehouse_config['склад фурнитура № 1'].copy()
+                        config['full_name'] = warehouse_name
+                    else:
+                        # Неизвестный склад
+                        config = {
+                            'short_name': warehouse_name,
+                            'city': 'неизвестно',
+                            'type': 'склад',
+                            'full_name': warehouse_name
+                        }
+                
+                current_stock = item.get(col, 0)
+                
+                if current_stock > 0 or ads_value > 0:
+                    # Рассчитываем MIN и MAX
+                    min_stock = ads_value * min_days if ads_value > 0 else 0
+                    max_stock = ads_value * max_days if ads_value > 0 else 0
+                    
+                    # Статус
+                    status = 'good'
+                    if current_stock < min_stock * 0.5:
+                        status = 'critical'
+                    elif current_stock < min_stock:
+                        status = 'warning'
+                    elif current_stock > max_stock:
+                        status = 'excess'
+                    
+                    # Дефицит и заказ
+                    min_deficit = max(0, min_stock - current_stock)
+                    order_quantity = max(0, max_stock - current_stock) if status in ['critical', 'warning'] else 0
+                    
+                    # Месяцы запаса
+                    months_of_stock = 0
+                    if ads_value > 0:
+                        months_of_stock = current_stock / (ads_value * 30)
+                    elif current_stock > 0:
+                        months_of_stock = 999
+                    
+                    # Денежные расчеты
+                    deficit_cost = min_deficit * item_price if item_price > 0 else 0
+                    order_cost = order_quantity * item_price if item_price > 0 else 0
+                    stock_value = current_stock * item_price if item_price > 0 else 0
+                    
+                    item_result['warehouses'].append({
+                        'warehouse_name': warehouse_name,
+                        'full_name': config['full_name'],
+                        'short_name': config['short_name'],
+                        'city': config['city'],
+                        'type': config['type'],
+                        'current_stock': current_stock,
+                        'min_stock': min_stock,
+                        'max_stock': max_stock,
+                        'min_deficit': min_deficit,
+                        'order_quantity': order_quantity,
+                        'status': status,
+                        'months_of_stock': months_of_stock,
+                        'ads': ads_value,
+                        'price': item_price,
+                        'deficit_cost': deficit_cost,
+                        'order_cost': order_cost,
+                        'stock_value': stock_value
+                    })
+        
+        if item_result['warehouses']:
+            results.append(item_result)
+    
+    print(f"✅ Анализ завершен: {len(results)} товаров обработано")
+    return results
+
+def display_simple_warehouse_results(analysis_results):
+    """
+    Простое отображение результатов анализа складов
+    """
+    
+    st.subheader("📊 Результаты анализа складов")
+    
+    # Собираем статистику по складам
+    warehouse_stats = {}
+    has_prices = False
+    
+    for item in analysis_results:
+        for warehouse in item['warehouses']:
+            wh_name = warehouse['short_name']
+            
+            if wh_name not in warehouse_stats:
+                warehouse_stats[wh_name] = {
+                    'full_name': warehouse['full_name'],
+                    'city': warehouse['city'],
+                    'type': warehouse['type'],
+                    'critical_count': 0,
+                    'warning_count': 0,
+                    'good_count': 0,
+                    'excess_count': 0,
+                    'total_order_cost': 0,
+                    'total_stock_value': 0,
+                    'total_deficit_cost': 0
+                }
+            
+            stats = warehouse_stats[wh_name]
+            
+            if warehouse['status'] == 'critical':
+                stats['critical_count'] += 1
+            elif warehouse['status'] == 'warning':
+                stats['warning_count'] += 1
+            elif warehouse['status'] == 'excess':
+                stats['excess_count'] += 1
+            else:
+                stats['good_count'] += 1
+            
+            stats['total_order_cost'] += warehouse.get('order_cost', 0)
+            stats['total_stock_value'] += warehouse.get('stock_value', 0)
+            stats['total_deficit_cost'] += warehouse.get('deficit_cost', 0)
+            
+            if warehouse.get('price', 0) > 0:
+                has_prices = True
+    
+    # Показываем сводку по складам
+    st.markdown("### 📈 Сводка по складам")
+    
+    summary_data = []
+    for wh_name, stats in warehouse_stats.items():
+        total_items = stats['critical_count'] + stats['warning_count'] + stats['good_count'] + stats['excess_count']
+        
+        summary_data.append({
+            'Склад': stats['full_name'],
+            'Город': stats['city'].title(),
+            'Тип': stats['type'],
+            'Всего товаров': total_items,
+            'Критичные': stats['critical_count'],
+            'Внимание': stats['warning_count'],
+            'Норма': stats['good_count'],
+            'Избыток': stats['excess_count'],
+            'К заказу (₸)': f"{stats['total_order_cost']:,.0f}" if has_prices else "Нет цен",
+            'Стоимость остатков (₸)': f"{stats['total_stock_value']:,.0f}" if has_prices else "Нет цен"
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df, use_container_width=True)
+    
+    # Общие метрики
+    total_critical = sum(stats['critical_count'] for stats in warehouse_stats.values())
+    total_warning = sum(stats['warning_count'] for stats in warehouse_stats.values())
+    total_order_cost = sum(stats['total_order_cost'] for stats in warehouse_stats.values())
+    total_stock_value = sum(stats['total_stock_value'] for stats in warehouse_stats.values())
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("🔴 Критичные товары", total_critical)
+    with col2:
+        st.metric("🟡 Требуют внимания", total_warning)
+    with col3:
+        if has_prices:
+            st.metric("💰 К заказу", f"{total_order_cost:,.0f} ₸")
+        else:
+            st.metric("📦 К заказу", "Нет цен")
+    with col4:
+        if has_prices:
+            st.metric("💎 Стоимость остатков", f"{total_stock_value:,.0f} ₸")
+        else:
+            st.metric("📦 Стоимость остатков", "Нет цен")
+    
+    # Детальная таблица критичных товаров
+    st.markdown("### 🔴 Критичные товары по складам")
+    
+    critical_items = []
+    for item in analysis_results:
+        for warehouse in item['warehouses']:
+            if warehouse['status'] == 'critical':
+                critical_items.append({
+                    'Товар': item['номенклатура'][:50] + '...' if len(item['номенклатура']) > 50 else item['номенклатура'],
+                    'Склад': warehouse['short_name'],
+                    'Город': warehouse['city'],
+                    'Остаток': int(warehouse['current_stock']),
+                    'MIN': int(warehouse['min_stock']),
+                    'Дефицит': int(warehouse['min_deficit']),
+                    'К заказу': int(warehouse['order_quantity']),
+                    'ADS': f"{warehouse['ads']:.3f}",
+                    'Месяцев': f"{warehouse['months_of_stock']:.1f}" if warehouse['months_of_stock'] < 99 else "999+",
+                    'Стоимость заказа': f"{warehouse['order_cost']:,.0f}" if has_prices else "Нет"
+                })
+    
+    if critical_items:
+        critical_df = pd.DataFrame(critical_items)
+        st.dataframe(critical_df, use_container_width=True)
+        st.write(f"**Найдено критичных позиций: {len(critical_items)}**")
+    else:
+        st.info("✅ Критичных товаров не найдено")
+    
+    # Детальная таблица товаров требующих внимания
+    st.markdown("### 🟡 Товары требующие внимания")
+    
+    warning_items = []
+    for item in analysis_results:
+        for warehouse in item['warehouses']:
+            if warehouse['status'] == 'warning':
+                warning_items.append({
+                    'Товар': item['номенклатура'][:50] + '...' if len(item['номенклатура']) > 50 else item['номенклатура'],
+                    'Склад': warehouse['short_name'],
+                    'Город': warehouse['city'],
+                    'Остаток': int(warehouse['current_stock']),
+                    'MIN': int(warehouse['min_stock']),
+                    'Дефицит': int(warehouse['min_deficit']),
+                    'К заказу': int(warehouse['order_quantity']),
+                    'ADS': f"{warehouse['ads']:.3f}",
+                    'Месяцев': f"{warehouse['months_of_stock']:.1f}" if warehouse['months_of_stock'] < 99 else "999+",
+                    'Стоимость заказа': f"{warehouse['order_cost']:,.0f}" if has_prices else "Нет"
+                })
+    
+    if warning_items:
+        warning_df = pd.DataFrame(warning_items)
+        st.dataframe(warning_df, use_container_width=True)
+        st.write(f"**Товаров требующих внимания: {len(warning_items)}**")
+    else:
+        st.info("✅ Товаров требующих внимания не найдено")
+
+def export_simple_results(analysis_results):
+    """
+    Простой экспорт результатов в Excel
+    """
+    
+    from io import BytesIO
+    
+    try:
+        output = BytesIO()
+        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            
+            # Лист 1: Детальная таблица всех товаров
+            detailed_data = []
+            
+            for item in analysis_results:
+                for warehouse in item['warehouses']:
+                    detailed_data.append({
+                        'Товар': item['номенклатура'],
+                        'Склад': warehouse['short_name'],
+                        'Полное название склада': warehouse['full_name'],
+                        'Город': warehouse['city'],
+                        'Тип': warehouse['type'],
+                        'Остаток': warehouse['current_stock'],
+                        'MIN': warehouse['min_stock'],
+                        'MAX': warehouse['max_stock'],
+                        'MIN дефицит': warehouse['min_deficit'],
+                        'К заказу': warehouse['order_quantity'],
+                        'Статус': warehouse['status'],
+                        'ADS': warehouse['ads'],
+                        'Месяцев запаса': warehouse['months_of_stock'],
+                        'Цена': warehouse['price'],
+                        'Стоимость дефицита': warehouse.get('deficit_cost', 0),
+                        'Стоимость заказа': warehouse.get('order_cost', 0),
+                        'Стоимость остатка': warehouse.get('stock_value', 0)
+                    })
+            
+            if detailed_data:
+                detailed_df = pd.DataFrame(detailed_data)
+                detailed_df.to_excel(writer, sheet_name='Детальный анализ', index=False)
+            
+            # Лист 2: Только критичные товары
+            critical_data = [row for row in detailed_data if row['Статус'] == 'critical']
+            if critical_data:
+                critical_df = pd.DataFrame(critical_data)
+                critical_df.to_excel(writer, sheet_name='Критичные товары', index=False)
+            
+            # Лист 3: Только товары требующие внимания
+            warning_data = [row for row in detailed_data if row['Статус'] == 'warning']
+            if warning_data:
+                warning_df = pd.DataFrame(warning_data)
+                warning_df.to_excel(writer, sheet_name='Требуют внимания', index=False)
+            
+            # Лист 4: Сводка по складам
+            warehouse_summary = {}
+            for row in detailed_data:
+                wh = row['Склад']
+                if wh not in warehouse_summary:
+                    warehouse_summary[wh] = {
+                        'Склад': row['Полное название склада'],
+                        'Город': row['Город'],
+                        'Тип': row['Тип'],
+                        'Всего товаров': 0,
+                        'Критичные': 0,
+                        'Внимание': 0,
+                        'Норма': 0,
+                        'Избыток': 0,
+                        'Общая стоимость заказов': 0,
+                        'Общая стоимость остатков': 0
+                    }
+                
+                warehouse_summary[wh]['Всего товаров'] += 1
+                warehouse_summary[wh]['Общая стоимость заказов'] += row['Стоимость заказа']
+                warehouse_summary[wh]['Общая стоимость остатков'] += row['Стоимость остатка']
+                
+                if row['Статус'] == 'critical':
+                    warehouse_summary[wh]['Критичные'] += 1
+                elif row['Статус'] == 'warning':
+                    warehouse_summary[wh]['Внимание'] += 1
+                elif row['Статус'] == 'excess':
+                    warehouse_summary[wh]['Избыток'] += 1
+                else:
+                    warehouse_summary[wh]['Норма'] += 1
+            
+            summary_df = pd.DataFrame(list(warehouse_summary.values()))
+            summary_df.to_excel(writer, sheet_name='Сводка по складам', index=False)
+        
+        output.seek(0)
+        
+        st.download_button(
+            label="💾 Скачать анализ складов",
+            data=output,
+            file_name=f"warehouse_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        st.success("✅ Файл готов к скачиванию!")
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка экспорта: {str(e)}")

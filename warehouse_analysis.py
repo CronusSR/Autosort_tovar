@@ -569,96 +569,127 @@ def add_warehouse_analysis_to_system(system):
         
         print("✅ Анализ складов успешно подключен к системе")
 
-
+# ⚠️ ВАЖНО: Эта функция должна быть НА ЭТОМ УРОВНЕ, не внутри предыдущей!
 def warehouse_analysis_page(system):
     """
     Страница анализа остатков по складам с интеграцией ADS магазинов
     """
-    try:
-        import clean_duplicate_ads
-        
-        def fixed_is_combined_data(store_name, filename):
-            combined_indicators = ['calculated_ads', 'общий', 'объединен', 'sales_data', 'combined']
-            store_name_lower = store_name.lower() if store_name else ""
-            filename_lower = filename.lower() if filename else ""
-            return any(indicator in store_name_lower or indicator in filename_lower for indicator in combined_indicators)
-        
-        clean_duplicate_ads.is_combined_data = fixed_is_combined_data
-        
-        original_clean = clean_duplicate_ads.clean_and_organize_store_ads
-        def fixed_clean_and_organize_store_ads(store_ads_by_city):
-            cleaned_data = {'города': {}, 'объединенные': [], 'дополнительные': []}
-            unique_ads_data = {}
-            
-            for category, stores in store_ads_by_city.items():
-                for store in stores:
-                    store_name = store['branch_name']
-                    ads_data = store['ads_data']
-                    filename = store.get('filename', store_name)  # ИСПРАВЛЕНИЕ
-                    
-                    data_id = f"{len(ads_data)}_{hash(store_name) % 1000}"
-                    
-                    if fixed_is_combined_data(store_name, filename):
-                        if data_id not in unique_ads_data:
-                            cleaned_data['объединенные'].append({
-                                'name': 'Объединенные ADS данные',
-                                'description': 'Общие данные продаж по всей сети',
-                                'store_type': 'объединенные',
-                                'ads_data': ads_data,
-                                'items_count': len(ads_data),
-                                'total_ads': ads_data['ads'].sum() if 'ads' in ads_data.columns else 0
-                            })
-                            unique_ads_data[data_id] = 'объединенные'
-                            
-                    elif category in ['алматы', 'шымкент', 'астана']:
-                        if category not in cleaned_data['города']:
-                            cleaned_data['города'][category] = []
-                        
-                        city_data_id = f"{category}_{data_id}"
-                        if city_data_id not in unique_ads_data:
-                            cleaned_data['города'][category].append({
-                                'name': store_name,
-                                'description': f"Данные {store.get('store_type', 'неизвестно')} в г.{category.title()}",
-                                'store_type': store.get('store_type', 'неизвестно'),
-                                'ads_data': ads_data,
-                                'items_count': len(ads_data),
-                                'total_ads': ads_data['ads'].sum() if 'ads' in ads_data.columns else 0,
-                                'filename': filename
-                            })
-                            unique_ads_data[city_data_id] = category
-            
-            return cleaned_data
-        
-        clean_duplicate_ads.clean_and_organize_store_ads = fixed_clean_and_organize_store_ads
-        print("✅ Срочное исправление применено")
-        
-    except:
-        print("⚠️ Используем стандартную обработку")
+    
     st.header("📦 Анализ остатков по складам")
+    
+    # 🚨 ПРОСТОЕ ИСПРАВЛЕНИЕ ARROW ОШИБКИ
+    import pandas as pd
+    
+    # Переопределяем st.dataframe только один раз
+    if 'safe_dataframe_applied' not in st.session_state:
+        st.session_state.safe_dataframe_applied = True
+        
+        original_dataframe = st.dataframe
+        
+        def safe_dataframe(data, **kwargs):
+            if isinstance(data, pd.DataFrame) and not data.empty:
+                data_copy = data.copy()
+                # Исправляем проблемные колонки
+                for col in data_copy.columns:
+                    if data_copy[col].dtype == 'object':
+                        data_copy[col] = data_copy[col].astype(str)
+                        data_copy[col] = data_copy[col].replace(['∞', 'inf', 'nan'], ['999+', '999+', ''])
+                
+                try:
+                    return original_dataframe(data_copy, **kwargs)
+                except:
+                    # Если все еще ошибка, показываем как HTML
+                    st.markdown(data_copy.to_html(escape=False), unsafe_allow_html=True)
+            else:
+                return original_dataframe(data, **kwargs)
+        
+        st.dataframe = safe_dataframe
+    
+    # 🚨 ПРОСТОЕ ИСПРАВЛЕНИЕ ADS ИНТЕГРАЦИИ  
+    def simple_integrate_ads(system):
+        """Простая функция поиска ADS данных"""
+        
+        result = {}
+        
+        # Ищем в multiple_files_data
+        if hasattr(system, 'multiple_files_data') and system.multiple_files_data:
+            if 'processed_results' in system.multiple_files_data:
+                processed = system.multiple_files_data['processed_results']
+                
+                for filename, data in processed.items():
+                    # Ищем ADS
+                    ads_df = None
+                    
+                    if isinstance(data, dict):
+                        for key in ['calculated_ads', 'ads_data', 'data']:
+                            if key in data and hasattr(data[key], 'columns'):
+                                if 'ads' in data[key].columns:
+                                    ads_df = data[key]
+                                    break
+                    elif hasattr(data, 'columns') and 'ads' in data.columns:
+                        ads_df = data
+                    
+                    if ads_df is not None:
+                        # Простое определение города
+                        city = 'общие'
+                        filename_lower = filename.lower()
+                        
+                        if 'шымкент' in filename_lower:
+                            city = 'шымкент'
+                        elif 'астана' in filename_lower:
+                            city = 'астана'
+                        elif 'алматы' in filename_lower or 'барыс' in filename_lower or 'казыбаева' in filename_lower:
+                            city = 'алматы'
+                        
+                        if city not in result:
+                            result[city] = []
+                        
+                        result[city].append({
+                            'store_type': 'магазин',
+                            'branch_name': filename.replace('.xlsx', ''),
+                            'ads_data': ads_df,
+                            'filename': filename
+                        })
+        
+        # Добавляем calculated_ads
+        if hasattr(system, 'calculated_ads') and system.calculated_ads is not None:
+            if not system.calculated_ads.empty:
+                if 'объединенные' not in result:
+                    result['объединенные'] = []
+                
+                result['объединенные'].append({
+                    'store_type': 'общий',
+                    'branch_name': 'calculated_ads',
+                    'ads_data': system.calculated_ads,
+                    'filename': 'calculated_ads'
+                })
+        
+        return result if result else None
     
     # Инициализация анализатора складов если его нет
     if not hasattr(system, 'warehouse_analyzer'):
         system.warehouse_analyzer = WarehouseAnalyzer()
         print("✅ Анализатор складов инициализирован")
     
-    # Проверяем интеграцию с анализом магазинов
-    store_ads_by_city = integrate_store_ads_with_warehouse_analysis(system)
+    # ИСПОЛЬЗУЕМ ПРОСТУЮ ФУНКЦИЮ ИНТЕГРАЦИИ
+    store_ads_by_city = simple_integrate_ads(system)
     
     if store_ads_by_city:
-        st.success(f"✅ Найдены ADS данные по {len(store_ads_by_city)} городам")
+        st.success(f"✅ Найдены ADS данные по {len(store_ads_by_city)} источникам")
         
-        # Показываем какие города найдены
-        with st.expander("🌍 Найденные города с ADS данными", expanded=True):
+        # Показываем какие данные найдены
+        with st.expander("🌍 Найденные ADS данные", expanded=True):
             for city, stores in store_ads_by_city.items():
-                st.write(f"**{city.title()}:** {len(stores)} магазинов")
+                st.write(f"**{city.title()}:** {len(stores)} источников")
                 for store in stores:
                     items_count = len(store['ads_data']) if hasattr(store['ads_data'], '__len__') else 0
                     total_ads = store['ads_data']['ads'].sum() if 'ads' in store['ads_data'].columns else 0
-                    st.write(f"  - {store['branch_name']} ({store['store_type']}) - {items_count} товаров, ADS: {total_ads:.2f}")
+                    st.write(f"  - {store['branch_name']} - {items_count} товаров, ADS: {total_ads:.2f}")
     else:
-        st.warning("⚠️ Нет данных ADS по магазинам. Загрузите файлы продаж в разделе 'ADS по магазинам'")
-        st.info("💡 Анализ будет выполнен без привязки к конкретным городам")
+        st.warning("⚠️ Нет данных ADS по магазинам. Загрузите файлы продаж в разделе 'ADS анализ по магазинам'")
+        return
     
+
     # Параметры анализа
     st.subheader("⚙️ Параметры анализа")
     

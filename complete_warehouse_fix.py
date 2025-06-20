@@ -65,11 +65,21 @@ def apply_complete_warehouse_fix(system):
     except Exception as e:
         print(f"❌ Шаг 4: Ошибка очистки ADS данных: {e}")
     
-    # Шаг 5: Добавляем флаг что исправления применены
-    system._warehouse_fix_applied = True
-    system._warehouse_fix_version = "2.1_clean_duplicates"
+    # Шаг 5: НОВЫЙ - Исправление ошибки Arrow сериализации 
+    try:
+        from fix_arrow_serialization import apply_complete_dataframe_fix
+        apply_complete_dataframe_fix()
+        print("✅ Шаг 5: Исправление Arrow сериализации применено")
+        success_count += 1
+        
+    except Exception as e:
+        print(f"❌ Шаг 5: Ошибка исправления Arrow: {e}")
     
-    print(f"🎉 ПОЛНОЕ исправление завершено! Успешно: {success_count}/4 шагов")
+    # Шаг 6: Добавляем флаг что исправления применены
+    system._warehouse_fix_applied = True
+    system._warehouse_fix_version = "2.2_arrow_fix"
+    
+    print(f"🎉 ПОЛНОЕ исправление завершено! Успешно: {success_count}/5 шагов")
     
     return success_count >= 3  # Считаем успешным если 3+ шага выполнены
 

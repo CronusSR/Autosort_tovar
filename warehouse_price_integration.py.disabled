@@ -1,0 +1,937 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Модуль интеграции цен из ADS файлов в анализ складов
+Разработан для системы анализа филиалов с иерархической структурой
+
+Особенности:
+- Чтение цен из 12-й колонки ADS файлов (начиная с 4-й строки)
+- Интеграция с существующим анализом складов
+- Сопоставление цен по наименованиям товаров
+- Учет иерархии складов (хаб -> склады 2-го уровня -> магазины)
+
+Автор: Claude Code Assistant
+Дата: 2025-06-23
+"""
+
+import pandas as pd
+import streamlit as st
+import numpy as np
+from typing import Dict, List, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
+
+
+# =============================================================================
+# СТРУКТУРА СКЛАДОВ И ФИЛИАЛОВ
+# =============================================================================
+
+WAREHOUSE_HIERARCHY = {
+    # Уровень 1: Главный хаб
+    'База Склад Фурнитура Комплект': {
+        'level': 1,
+        'city': 'Алматы',
+        'type': 'Главный хаб',
+        'feeds_to': ['Казыбаева Склад Фурнитура TRADE', 'Барыс Склад Фурнитура TRADE', 
+                     'АО Склад Фурнитура TRADE', '4 Склад фурнитуры АЗМ Шымкент "Овощная база"', 
+                     'склад фурнитура № 1'],
+        'min_days': 30,
+        'max_days': 90,
+        'priority': 1,
+        'description': '95% приходов от партнеров'
+    },
+    
+    # Уровень 2: Склады второго уровня
+    'Казыбаева Склад Фурнитура TRADE': {
+        'level': 2,
+        'city': 'Алматы',
+        'type': 'Склад 2-го уровня',
+        'feeds_from': 'База Склад Фурнитура Комплект',
+        'feeds_to': ['ТД Казыбаева ФУРНИТУРА магазин'],
+        'min_days': 15,
+        'max_days': 45,
+        'priority': 2,
+        'description': 'Питается от главного хаба'
+    },
+    
+    'Барыс Склад Фурнитура TRADE': {
+        'level': 2,
+        'city': 'Алматы',
+        'type': 'Магазин+склад',
+        'feeds_from': 'База Склад Фурнитура Комплект',
+        'feeds_to': [],
+        'min_days': 15,
+        'max_days': 45,
+        'priority': 2,
+        'description': 'Магазин и склад, питается от хаба'
+    },
+    
+    'АО Склад Фурнитура TRADE': {
+        'level': 2,
+        'city': 'Алматы',
+        'type': 'Специализированный',
+        'feeds_from': 'База Склад Фурнитура Комплект',
+        'feeds_to': [],
+        'min_days': 10,
+        'max_days': 30,
+        'priority': 3,
+        'category_filter': 'кромочные материалы',
+        'description': 'Только кромочные материалы'
+    },
+    
+    '4 Склад фурнитуры АЗМ Шымкент "Овощная база"': {
+        'level': 2,
+        'city': 'Шымкент',
+        'type': 'Склад 2-го уровня',
+        'feeds_from': 'База Склад Фурнитура Комплект',
+        'feeds_to': ['6 Склад фурнитуры "Овощная база" Магазин'],
+        'min_days': 20,
+        'max_days': 60,
+        'priority': 2,
+        'description': 'Склад в Шымкенте, питается от хаба'
+    },
+    
+    'склад фурнитура № 1': {
+        'level': 2,
+        'city': 'Астана',
+        'type': 'Склад 2-го уровня',
+        'feeds_from': 'База Склад Фурнитура Комплект',
+        'feeds_to': ['Магазин фурнитуры'],
+        'min_days': 20,
+        'max_days': 60,
+        'priority': 2,
+        'description': 'Склад в Астане, питается от хаба'
+    },
+    
+    # Уровень 3: Магазины
+    'ТД Казыбаева ФУРНИТУРА магазин': {
+        'level': 3,
+        'city': 'Алматы',
+        'type': 'Магазин',
+        'feeds_from': 'Казыбаева Склад Фурнитура TRADE',
+        'feeds_to': [],
+        'min_days': 8,
+        'max_days': 25,
+        'priority': 3,
+        'description': 'Магазин, питается от Казыбаева Склад'
+    },
+    
+    '6 Склад фурнитуры "Овощная база" Магазин': {
+        'level': 3,
+        'city': 'Шымкент',
+        'type': 'Магазин',
+        'feeds_from': '4 Склад фурнитуры АЗМ Шымкент "Овощная база"',
+        'feeds_to': [],
+        'min_days': 10,
+        'max_days': 30,
+        'priority': 3,
+        'description': 'Магазин в Шымкенте, питается от 4 Склад АЗМ'
+    },
+    
+    'Магазин фурнитуры': {
+        'level': 3,
+        'city': 'Астана',
+        'type': 'Магазин',
+        'feeds_from': 'склад фурнитура № 1',
+        'feeds_to': [],
+        'min_days': 10,
+        'max_days': 30,
+        'priority': 3,
+        'description': 'Магазин в Астане, питается от склад № 1'
+    }
+}
+
+
+# =============================================================================
+# ФУНКЦИИ ЧТЕНИЯ ЦЕН ИЗ ADS ФАЙЛОВ
+# =============================================================================
+
+def extract_prices_from_ads_file(file_data, filename: str) -> pd.DataFrame:
+    """
+    Адаптивное извлечение цен из ADS файла с автоматическим определением колонки
+    
+    Args:
+        file_data: Данные файла (может быть путь или DataFrame)
+        filename: Имя файла для определения филиала
+    
+    Returns:
+        DataFrame с колонками: ['наименование', 'цена', 'филиал', 'источник']
+    """
+    try:
+        # Читаем файл если это путь
+        if isinstance(file_data, str):
+            df = pd.read_excel(file_data)
+        elif hasattr(file_data, 'read'):
+            df = pd.read_excel(file_data)
+        else:
+            df = file_data.copy()
+        
+        st.info(f"📊 Читаю цены из файла: {filename}")
+        
+        # Проверяем размер файла
+        if len(df) < 4:
+            st.warning(f"⚠️ Файл {filename} слишком мал (меньше 4 строк)")
+            return pd.DataFrame()
+        
+        # Автоматически определяем колонку с ценами
+        price_col_idx = None
+        best_score = 0
+        
+        # Сначала проверяем колонку "Посл. закупка" (приоритет)
+        posled_zakupka_col_idx = None
+        
+        # Показываем все колонки для диагностики
+        st.write("🔍 **Поиск колонки 'Посл. закупка' среди всех колонок:**")
+        for col_idx, col_name in enumerate(df.columns):
+            col_name_str = str(col_name).strip()
+            col_name_clean = col_name_str.lower()
+            
+            # Расширенный поиск вариантов названий
+            is_posled_zakupka = any([
+                'посл' in col_name_clean and 'закуп' in col_name_clean,
+                'последн' in col_name_clean and 'закуп' in col_name_clean,
+                col_name_clean == 'посл. закупка',
+                'last' in col_name_clean and 'purchase' in col_name_clean,
+                col_name_clean.replace(' ', '').replace('.', '') == 'послзакупка'
+            ])
+            
+            if is_posled_zakupka:
+                posled_zakupka_col_idx = col_idx
+                st.success(f"✅ Найдена колонка 'Посл. закупка': {col_idx + 1} - '{col_name_str}'")
+                break
+            else:
+                # Показываем для диагностики
+                st.write(f"   {col_idx + 1:2d}. {col_name_str}")
+        
+        if posled_zakupka_col_idx is None:
+            st.warning("⚠️ Колонка 'Посл. закупка' не найдена среди названий колонок")
+        
+        # Если найдена колонка "Посл. закупка", проверяем её
+        if posled_zakupka_col_idx is not None:
+            col_data = df.iloc[:, posled_zakupka_col_idx].iloc[3:]  # С 4-й строки
+            numeric_count = 0
+            valid_prices = 0
+            
+            for val in col_data:
+                if pd.notna(val):
+                    try:
+                        if isinstance(val, (int, float)) and val > 0:
+                            numeric_count += 1
+                            if 1 < val < 1000000:  # Разумный диапазон цен
+                                valid_prices += 1
+                        elif isinstance(val, str):
+                            val_clean = str(val).replace(' ', '').replace(',', '.')
+                            val_clean = ''.join(c for c in val_clean if c.isdigit() or c == '.')
+                            if val_clean:
+                                num_val = float(val_clean)
+                                if num_val > 0:
+                                    numeric_count += 1
+                                    if 1 < num_val < 1000000:
+                                        valid_prices += 1
+                    except:
+                        pass
+            
+            if numeric_count > 0:  # Если есть хоть какие-то числовые значения
+                price_col_idx = posled_zakupka_col_idx
+                best_score = numeric_count + 100  # Высокий приоритет для "Посл. закупка"
+                st.success(f"✅ Использую колонку 'Посл. закупка' {posled_zakupka_col_idx + 1} (найдено {numeric_count} числовых значений, {valid_prices} валидных цен)")
+        
+        # Если "Посл. закупка" не найдена или не содержит цены, пробуем 12-ю колонку
+        if price_col_idx is None and len(df.columns) >= 12:
+            col_12_data = df.iloc[:, 11].iloc[3:]  # 12-я колонка с 4-й строки
+            col_12_name = df.columns[11]
+            numeric_count = 0
+            
+            st.info(f"🔍 Проверяю 12-ю колонку: '{col_12_name}'")
+            
+            for val in col_12_data:
+                if pd.notna(val):
+                    try:
+                        if isinstance(val, (int, float)) and val > 0:
+                            numeric_count += 1
+                        elif isinstance(val, str):
+                            val_clean = str(val).replace(' ', '').replace(',', '.')
+                            val_clean = ''.join(c for c in val_clean if c.isdigit() or c == '.')
+                            if val_clean and float(val_clean) > 0:
+                                numeric_count += 1
+                    except:
+                        pass
+            
+            if numeric_count > len(col_12_data) * 0.1:  # Понижаем порог до 10%
+                price_col_idx = 11
+                best_score = numeric_count + 50  # Бонус за 12-ю колонку
+                st.info(f"✅ Использую 12-ю колонку '{col_12_name}' (найдено {numeric_count} числовых значений)")
+            else:
+                st.warning(f"⚠️ 12-я колонка '{col_12_name}' содержит только {numeric_count} числовых значений из {len(col_12_data)}")
+        
+        # Если 12-я колонка не подходит, ищем другие
+        if price_col_idx is None:
+            st.info("🔍 12-я колонка не содержит цены, ищу альтернативы...")
+            
+            for col_idx, col_name in enumerate(df.columns):
+                score = 0
+                col_data = df[col_name].iloc[3:]  # С 4-й строки
+                
+                # Проверяем название колонки
+                col_name_lower = str(col_name).lower()
+                price_keywords = [
+                    'цена', 'price', 'стоимость', 'сумма', 'средн', 'сред', 'руб', 'тенге',
+                    'посл', 'закуп', 'последн', 'purchase', 'cost', 'закупочн'
+                ]
+                matching_keywords = [word for word in price_keywords if word in col_name_lower]
+                if matching_keywords:
+                    score += 50
+                    st.info(f"🎯 Найдена ценовая колонка по названию: '{col_name}' (ключевые слова: {matching_keywords})")
+                
+                # Проверяем числовые значения
+                numeric_count = 0
+                valid_prices = 0
+                
+                for val in col_data:
+                    if pd.notna(val):
+                        try:
+                            if isinstance(val, (int, float)):
+                                if val > 0:
+                                    numeric_count += 1
+                                    if 1 < val < 1000000:  # Разумный диапазон цен
+                                        valid_prices += 1
+                            elif isinstance(val, str):
+                                val_clean = str(val).replace(' ', '').replace(',', '.')
+                                val_clean = ''.join(c for c in val_clean if c.isdigit() or c == '.')
+                                if val_clean:
+                                    num_val = float(val_clean)
+                                    if num_val > 0:
+                                        numeric_count += 1
+                                        if 1 < num_val < 1000000:
+                                            valid_prices += 1
+                        except:
+                            pass
+                
+                # Добавляем очки за числовые значения
+                if numeric_count > 0:
+                    score += numeric_count
+                    
+                    # Бонус за разумные цены
+                    if valid_prices > numeric_count * 0.5:
+                        score += 20
+                
+                if score > best_score:
+                    best_score = score
+                    price_col_idx = col_idx
+        
+        if price_col_idx is None:
+            st.error(f"❌ Не удалось найти колонку с ценами в {filename}")
+            return pd.DataFrame()
+        
+        # Извлекаем цены из найденной колонки
+        nomenclature_col = df.iloc[:, 0]  # Первая колонка - наименования
+        price_col = df.iloc[:, price_col_idx]  # Найденная ценовая колонка
+        price_col_name = df.columns[price_col_idx]
+        
+        st.success(f"💰 Использую колонку {price_col_idx + 1}: '{price_col_name}'")
+        
+        price_data = []
+        processed_items = 0
+        
+        # Начинаем с 4-й строки (индекс 3)
+        for idx in range(3, len(df)):
+            name = nomenclature_col.iloc[idx]
+            price_val = price_col.iloc[idx]
+            
+            # Проверяем наименование
+            if pd.isna(name) or str(name).strip() == '':
+                continue
+            
+            name_clean = str(name).strip()
+            if name_clean.lower() in ['nan', 'none', '']:
+                continue
+            
+            # Обрабатываем цену
+            price_clean = 0.0
+            if pd.notna(price_val):
+                try:
+                    if isinstance(price_val, (int, float)):
+                        price_clean = float(price_val)
+                    else:
+                        # Извлекаем число из строки
+                        price_str = str(price_val).replace(' ', '').replace(',', '.')
+                        price_str = ''.join(c for c in price_str if c.isdigit() or c == '.')
+                        if price_str:
+                            price_clean = float(price_str)
+                except (ValueError, TypeError):
+                    price_clean = 0.0
+            
+            # Определяем филиал из имени файла
+            branch = determine_branch_from_filename(filename)
+            
+            price_data.append({
+                'наименование': name_clean,
+                'цена': price_clean,
+                'филиал': branch,
+                'источник': filename,
+                'колонка_цены': price_col_idx + 1,
+                'строка_в_файле': idx + 1
+            })
+            
+            processed_items += 1
+        
+        result_df = pd.DataFrame(price_data)
+        
+        if not result_df.empty:
+            # Статистика по ценам
+            items_with_prices = (result_df['цена'] > 0).sum()
+            avg_price = result_df[result_df['цена'] > 0]['цена'].mean() if items_with_prices > 0 else 0
+            
+            st.success(f"✅ {filename}: {len(result_df)} товаров, {items_with_prices} с ценами (ср. цена: {avg_price:,.0f} ₸)")
+        else:
+            st.warning(f"⚠️ {filename}: не удалось извлечь ценовые данные")
+        
+        return result_df
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка чтения цен из {filename}: {str(e)}")
+        return pd.DataFrame()
+
+
+def determine_branch_from_filename(filename: str) -> str:
+    """
+    Улучшенное определение филиала по имени файла
+    """
+    filename_lower = filename.lower()
+    
+    # Более точные ключевые слова с приоритетом
+    branch_patterns = [
+        ('барыс', 'Алматы_Барыс'),
+        ('казыбаева', 'Алматы_Казыбаева'),
+        ('база', 'Алматы_База'),
+        ('комплект', 'Алматы_База'),
+        ('шымкент', 'Шымкент'),
+        ('овощная', 'Шымкент'),
+        ('астана', 'Астана'),
+        ('алматы', 'Алматы'),
+        ('ао', 'Алматы'),  # АО Склад
+    ]
+    
+    # Ищем паттерны в порядке приоритета
+    for pattern, branch in branch_patterns:
+        if pattern in filename_lower:
+            return branch
+    
+    return 'Неопределен'
+
+
+def collect_prices_from_multiple_ads_files(multiple_files_data: Dict) -> pd.DataFrame:
+    """
+    Собирает цены из всех ADS файлов системы
+    
+    Args:
+        multiple_files_data: Данные множественных файлов из системы
+    
+    Returns:
+        Объединенный DataFrame с ценами из всех файлов
+    """
+    st.info("🔄 Собираю цены из всех ADS файлов...")
+    
+    all_prices = []
+    processed_files = 0
+    
+    try:
+        # Проверяем структуру данных
+        if not multiple_files_data or 'processed_results' not in multiple_files_data:
+            st.warning("⚠️ Нет данных множественных файлов для извлечения цен")
+            return pd.DataFrame()
+        
+        processed_results = multiple_files_data['processed_results']
+        
+        for filename, file_data in processed_results.items():
+            try:
+                st.write(f"📄 Обрабатываю файл: {filename}")
+                
+                # Ищем исходные данные файла
+                source_data = None
+                
+                # ИСПРАВЛЕНИЕ: Ищем ТОЛЬКО исходные Excel данные, НЕ обработанные ADS
+                source_data = None
+                
+                if isinstance(file_data, dict):
+                    # Приоритет: ТОЛЬКО исходные данные из Excel файлов
+                    priority_keys = ['source_data', 'raw_data', 'original_data', 'excel_data', 'uploaded_data']
+                    
+                    for key in priority_keys:
+                        if key in file_data and file_data[key] is not None:
+                            candidate = file_data[key]
+                            
+                            # Проверяем что это DataFrame с колонками из Excel
+                            if hasattr(candidate, 'columns'):
+                                columns = [str(col).lower() for col in candidate.columns]
+                                
+                                # ИСПРАВЛЕНО: Всегда используем source_data (это исходные Excel данные)
+                                # Убираем проверку на processed indicators для source_data
+                                # ads_processed_indicators = ['ads', 'average_value', 'total_sales', 'branch']
+                                # is_processed_ads = any(indicator in columns for indicator in ads_processed_indicators)
+                                
+                                if key == 'source_data' or True:  # ИСПРАВЛЕНО: всегда используем source_data
+                                    # Проверяем наличие вероятных ценовых колонок
+                                    likely_price_indicators = [
+                                        'посл', 'закуп', 'цена', 'price', 'стоимость', 'сумма'
+                                    ]
+                                    has_price_indicators = any(
+                                        any(indicator in col for indicator in likely_price_indicators) 
+                                        for col in columns
+                                    )
+                                    
+                                    if has_price_indicators or len(candidate.columns) >= 12:
+                                        source_data = candidate
+                                        st.success(f"✅ Найдены ИСХОДНЫЕ данные в ключе '{key}' для {filename}")
+                                        st.info(f"📊 Структура: {len(candidate)} строк, {len(candidate.columns)} колонок")
+                                        break
+                                else:
+                                    st.warning(f"⚠️ Ключ '{key}' содержит обработанные ADS данные, пропускаю")
+                    
+                    # Если не нашли исходные данные, показываем что доступно
+                    if source_data is None:
+                        st.error(f"❌ Не найдены ИСХОДНЫЕ Excel данные для {filename}")
+                        st.write("🔍 Доступные ключи данных:")
+                        for key, value in file_data.items():
+                            if hasattr(value, 'shape'):
+                                columns_preview = list(value.columns[:5]) if hasattr(value, 'columns') else []
+                                st.write(f"   - {key}: {value.shape} {columns_preview}")
+                            else:
+                                st.write(f"   - {key}: {type(value)}")
+                
+                elif hasattr(file_data, 'shape'):  # Это уже DataFrame
+                    # Проверяем что это не обработанные ADS данные
+                    columns = [str(col).lower() for col in file_data.columns]
+                    ads_processed_indicators = ['ads', 'average_value', 'total_sales', 'branch']
+                    is_processed_ads = any(indicator in columns for indicator in ads_processed_indicators)
+                    
+                    if not is_processed_ads:
+                        source_data = file_data
+                        st.success(f"✅ Используются прямые данные для {filename}")
+                    else:
+                        st.error(f"❌ Данные для {filename} являются обработанными ADS, нужны исходные Excel данные")
+                
+                if source_data is not None:
+                    # Очищаем данные от служебных колонок перед извлечением цен
+                    if hasattr(source_data, 'columns'):
+                        # Удаляем служебные колонки если они есть
+                        columns_to_drop = ['source_file', 'branch', 'processing_timestamp']
+                        source_data_cleaned = source_data.copy()
+                        
+                        for col in columns_to_drop:
+                            if col in source_data_cleaned.columns:
+                                source_data_cleaned = source_data_cleaned.drop(columns=[col])
+                                st.info(f"🧹 Удалена служебная колонка '{col}' из {filename}")
+                        
+                        source_data = source_data_cleaned
+                    
+                    # Извлекаем цены
+                    prices_df = extract_prices_from_ads_file(source_data, filename)
+                    
+                    if not prices_df.empty:
+                        all_prices.append(prices_df)
+                        processed_files += 1
+                    else:
+                        st.warning(f"⚠️ Не удалось извлечь цены из {filename}")
+                else:
+                    st.warning(f"⚠️ Не найдены исходные данные в {filename}")
+                
+            except Exception as e:
+                st.error(f"❌ Ошибка обработки файла {filename}: {str(e)}")
+                import traceback
+                st.text(f"Детали ошибки: {traceback.format_exc()}")
+                continue
+        
+        # Объединяем все цены
+        if all_prices:
+            combined_prices = pd.concat(all_prices, ignore_index=True)
+            
+            # Удаляем дубликаты по наименованию и филиалу (оставляем последнюю запись)
+            combined_prices = combined_prices.drop_duplicates(
+                subset=['наименование', 'филиал'], 
+                keep='last'
+            ).reset_index(drop=True)
+            
+            # Статистика
+            total_items = len(combined_prices)
+            unique_items = combined_prices['наименование'].nunique()
+            items_with_prices = (combined_prices['цена'] > 0).sum()
+            branches = combined_prices['филиал'].nunique()
+            
+            st.success(f"✅ Собрано цен: {total_items} записей, {unique_items} уникальных товаров, "
+                      f"{items_with_prices} с ценами, {branches} филиалов из {processed_files} файлов")
+            
+            return combined_prices
+        else:
+            st.warning("⚠️ Не удалось извлечь цены ни из одного файла")
+            return pd.DataFrame()
+            
+    except Exception as e:
+        st.error(f"❌ Ошибка сбора цен: {str(e)}")
+        import traceback
+        st.text(f"Детали ошибки: {traceback.format_exc()}")
+        return pd.DataFrame()
+
+
+# =============================================================================
+# ИНТЕГРАЦИЯ С АНАЛИЗОМ СКЛАДОВ
+# =============================================================================
+
+def integrate_prices_with_warehouse_analysis(warehouse_analysis_results: List, 
+                                           prices_df: pd.DataFrame) -> List:
+    """
+    Интегрирует ценовые данные в результаты анализа складов
+    
+    Args:
+        warehouse_analysis_results: Результаты анализа складов
+        prices_df: DataFrame с ценами
+    
+    Returns:
+        Обновленные результаты анализа с ценовой информацией
+    """
+    if not warehouse_analysis_results or prices_df.empty:
+        st.warning("⚠️ Нет данных для интеграции цен")
+        return warehouse_analysis_results
+    
+    st.info("🔄 Интегрирую цены в анализ складов...")
+    
+    # Создаем индекс цен для быстрого поиска
+    price_index = {}
+    for _, row in prices_df.iterrows():
+        item_name = row['наименование']
+        price = row['цена']
+        branch = row['филиал']
+        
+        if item_name not in price_index:
+            price_index[item_name] = {}
+        
+        # Сохраняем цену по филиалу
+        price_index[item_name][branch] = price
+        
+        # Также сохраняем общую цену (последняя найденная)
+        if price > 0:
+            price_index[item_name]['общая'] = price
+    
+    # Маппинг складов к филиалам
+    warehouse_to_branch = {
+        'База Склад Фурнитура Комплект': 'Алматы_База',
+        'Казыбаева Склад Фурнитура TRADE': 'Алматы_Казыбаева', 
+        'ТД Казыбаева ФУРНИТУРА магазин': 'Алматы_Казыбаева',
+        'Барыс Склад Фурнитура TRADE': 'Алматы_Барыс',
+        'АО Склад Фурнитура TRADE': 'Алматы',
+        '4 Склад фурнитуры АЗМ Шымкент "Овощная база"': 'Шымкент',
+        '6 Склад фурнитуры "Овощная база" Магазин': 'Шымкент',
+        'склад фурнитура № 1': 'Астана',
+        'Магазин фурнитуры': 'Астана'
+    }
+    
+    updated_results = []
+    items_with_prices = 0
+    total_items = 0
+    
+    for item_analysis in warehouse_analysis_results:
+        item_name = item_analysis.get('номенклатура', '')
+        total_items += 1
+        
+        # Ищем цены для этого товара
+        item_prices = price_index.get(item_name, {})
+        
+        # Обновляем анализ по складам
+        if 'warehouses' in item_analysis:
+            for warehouse_key, warehouse_data in item_analysis['warehouses'].items():
+                # Определяем филиал для склада
+                branch = warehouse_to_branch.get(warehouse_key, 'общая')
+                
+                # Ищем цену по приоритету: филиал -> общая -> 0
+                price = 0
+                price_source = 'не найдена'
+                
+                if branch in item_prices and item_prices[branch] > 0:
+                    price = item_prices[branch]
+                    price_source = f'филиал {branch}'
+                elif 'общая' in item_prices and item_prices['общая'] > 0:
+                    price = item_prices['общая']
+                    price_source = 'общие данные'
+                elif item_prices:  # Берем любую доступную цену
+                    for br, pr in item_prices.items():
+                        if pr > 0:
+                            price = pr
+                            price_source = f'другой филиал {br}'
+                            break
+                
+                # Добавляем ценовую информацию
+                warehouse_data['unit_price'] = price
+                warehouse_data['price_source'] = price_source
+                
+                # Пересчитываем стоимостные показатели
+                current_stock = warehouse_data.get('current_stock', 0)
+                order_quantity = warehouse_data.get('order_quantity', 0)
+                min_deficit = warehouse_data.get('min_deficit', 0)
+                max_surplus = warehouse_data.get('max_surplus', 0)
+                
+                warehouse_data['current_stock_value'] = current_stock * price
+                warehouse_data['order_value'] = order_quantity * price
+                warehouse_data['deficit_value'] = min_deficit * price
+                warehouse_data['surplus_value'] = max_surplus * price
+                
+                # Обновляем рекомендацию с ценовой информацией
+                if price > 0:
+                    recommendation = warehouse_data.get('recommendation', '')
+                    if order_quantity > 0:
+                        order_cost = order_quantity * price
+                        recommendation += f" (к заказу: {order_cost:,.0f} ₸)"
+                    warehouse_data['recommendation'] = recommendation
+        
+        # Добавляем общую ценовую информацию товара
+        general_price = item_prices.get('общая', 0)
+        if general_price == 0 and item_prices:
+            # Берем любую доступную цену как общую
+            for price_val in item_prices.values():
+                if price_val > 0:
+                    general_price = price_val
+                    break
+        
+        item_analysis['unit_price'] = general_price
+        item_analysis['has_price'] = general_price > 0
+        
+        if general_price > 0:
+            items_with_prices += 1
+        
+        updated_results.append(item_analysis)
+    
+    # Статистика интеграции
+    price_coverage = (items_with_prices / total_items * 100) if total_items > 0 else 0
+    st.success(f"✅ Интеграция завершена: {items_with_prices} из {total_items} товаров получили цены "
+              f"({price_coverage:.1f}% покрытие)")
+    
+    return updated_results
+
+
+def update_warehouse_recommendations_with_prices(recommendations: Dict, 
+                                                updated_analysis: List) -> Dict:
+    """
+    Обновляет рекомендации по складам с учетом ценовой информации
+    """
+    if not recommendations or not updated_analysis:
+        return recommendations
+    
+    st.info("🔄 Обновляю рекомендации с ценовой информацией...")
+    
+    # Пересчитываем стоимостные метрики для каждого склада
+    for warehouse_key, rec in recommendations.items():
+        total_stock_value = 0
+        total_order_value = 0
+        total_deficit_value = 0
+        total_surplus_value = 0
+        
+        # Обновляем списки товаров с ценовой информацией
+        for category in ['critical_items', 'warning_items', 'excess_items']:
+            if category in rec:
+                updated_items = []
+                for item in rec[category]:
+                    item_name = item.get('item', item.get('name', ''))
+                    
+                    # Ищем обновленную информацию по товару
+                    for analysis_item in updated_analysis:
+                        if analysis_item.get('номенклатура') == item_name:
+                            if 'warehouses' in analysis_item and warehouse_key in analysis_item['warehouses']:
+                                warehouse_data = analysis_item['warehouses'][warehouse_key]
+                                
+                                # Обновляем ценовые поля
+                                item['unit_price'] = warehouse_data.get('unit_price', 0)
+                                item['price_source'] = warehouse_data.get('price_source', 'не найдена')
+                                item['current_stock_value'] = warehouse_data.get('current_stock_value', 0)
+                                item['order_value'] = warehouse_data.get('order_value', 0)
+                                item['deficit_value'] = warehouse_data.get('deficit_value', 0)
+                                item['surplus_value'] = warehouse_data.get('surplus_value', 0)
+                                
+                                # Суммируем для общих метрик склада
+                                total_stock_value += warehouse_data.get('current_stock_value', 0)
+                                total_order_value += warehouse_data.get('order_value', 0)
+                                total_deficit_value += warehouse_data.get('deficit_value', 0)
+                                total_surplus_value += warehouse_data.get('surplus_value', 0)
+                                
+                                break
+                    
+                    updated_items.append(item)
+                
+                rec[category] = updated_items
+        
+        # Обновляем общие метрики склада
+        rec['total_stock_value'] = total_stock_value
+        rec['total_order_value'] = total_order_value  
+        rec['total_deficit_value'] = total_deficit_value
+        rec['total_surplus_value'] = total_surplus_value
+        
+        # Добавляем информацию о ценовом покрытии
+        total_items = len(rec.get('critical_items', [])) + len(rec.get('warning_items', [])) + len(rec.get('excess_items', []))
+        items_with_prices = 0
+        
+        for category in ['critical_items', 'warning_items', 'excess_items']:
+            if category in rec:
+                for item in rec[category]:
+                    if item.get('unit_price', 0) > 0:
+                        items_with_prices += 1
+        
+        rec['price_coverage'] = (items_with_prices / total_items * 100) if total_items > 0 else 0
+        rec['items_with_prices'] = items_with_prices
+        rec['total_items'] = total_items
+    
+    st.success("✅ Рекомендации обновлены с ценовой информацией")
+    return recommendations
+
+
+# =============================================================================
+# ГЛАВНАЯ ФУНКЦИЯ ИНТЕГРАЦИИ
+# =============================================================================
+
+def apply_warehouse_price_integration(system):
+    """
+    Применяет интеграцию цен из ADS файлов к системе анализа складов
+    """
+    try:
+        st.info("🔧 Применяю интеграцию цен для анализа складов...")
+        
+        # Проверяем наличие необходимых данных
+        if not hasattr(system, 'multiple_files_data') or not system.multiple_files_data:
+            st.error("❌ Нет данных множественных файлов. Сначала загрузите ADS файлы.")
+            return False
+        
+        # Добавляем новые методы к системе
+        system.extract_prices_from_ads_files = lambda: collect_prices_from_multiple_ads_files(system.multiple_files_data)
+        system.integrate_warehouse_prices = integrate_prices_with_warehouse_analysis
+        system.update_warehouse_recommendations_with_prices = update_warehouse_recommendations_with_prices
+        
+        # Сохраняем оригинальный метод анализа складов если он есть
+        if hasattr(system, 'warehouse_analyzer') and hasattr(system.warehouse_analyzer, 'analyze_warehouse_stock'):
+            system._original_analyze_warehouse_stock = system.warehouse_analyzer.analyze_warehouse_stock
+        
+        # Создаем улучшенный метод анализа с интеграцией цен
+        def enhanced_warehouse_analysis_with_prices(remains_df, ads_data, min_days=10, max_days=50):
+            """Улучшенный анализ складов с автоматической интеграцией цен"""
+            
+            # Сначала выполняем стандартный анализ
+            if hasattr(system, '_original_analyze_warehouse_stock'):
+                analysis_results = system._original_analyze_warehouse_stock(remains_df, ads_data, min_days, max_days)
+            else:
+                st.error("❌ Оригинальный метод анализа складов не найден")
+                return None
+            
+            if analysis_results is None:
+                return None
+            
+            # Собираем цены из ADS файлов
+            prices_df = system.extract_prices_from_ads_files()
+            
+            if prices_df.empty:
+                st.warning("⚠️ Цены не найдены в ADS файлах. Анализ выполнен без ценовой информации.")
+                return analysis_results
+            
+            # Интегрируем цены в результаты анализа
+            enhanced_results = system.integrate_warehouse_prices(analysis_results, prices_df)
+            
+            return enhanced_results
+        
+        # Заменяем метод анализа на улучшенный
+        if hasattr(system, 'warehouse_analyzer'):
+            system.warehouse_analyzer.analyze_warehouse_stock = enhanced_warehouse_analysis_with_prices
+        
+        # Добавляем обновленную структуру складов
+        system.warehouse_hierarchy = WAREHOUSE_HIERARCHY
+        
+        # Флаг успешной интеграции
+        system._warehouse_price_integration_applied = True
+        
+        st.success("✅ Интеграция цен для анализа складов успешно применена!")
+        st.info("💡 Теперь анализ складов будет автоматически включать ценовую информацию из ADS файлов")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка применения интеграции цен: {str(e)}")
+        return False
+
+
+def show_price_integration_status(system):
+    """
+    Показывает статус интеграции цен в анализе складов
+    """
+    st.subheader("📊 Статус интеграции цен в анализе складов")
+    
+    # Проверяем статус интеграции
+    integration_applied = hasattr(system, '_warehouse_price_integration_applied')
+    has_multiple_files = hasattr(system, 'multiple_files_data') and system.multiple_files_data
+    has_warehouse_analyzer = hasattr(system, 'warehouse_analyzer')
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if integration_applied:
+            st.success("✅ Интеграция применена")
+        else:
+            st.error("❌ Интеграция не применена")
+    
+    with col2:
+        if has_multiple_files:
+            files_count = len(system.multiple_files_data.get('processed_results', {}))
+            st.success(f"✅ ADS файлы: {files_count}")
+        else:
+            st.error("❌ Нет ADS файлов")
+    
+    with col3:
+        if has_warehouse_analyzer:
+            st.success("✅ Анализатор складов")
+        else:
+            st.error("❌ Нет анализатора складов")
+    
+    # Показываем структуру складов
+    if integration_applied:
+        st.subheader("🏪 Структура складов")
+        
+        # Группируем по уровням
+        for level in [1, 2, 3]:
+            level_name = {1: "Главный хаб", 2: "Склады 2-го уровня", 3: "Магазины"}[level]
+            st.markdown(f"### {level_name}")
+            
+            level_warehouses = []
+            for name, config in WAREHOUSE_HIERARCHY.items():
+                if config['level'] == level:
+                    level_warehouses.append({
+                        'Название': name,
+                        'Город': config['city'],
+                        'Тип': config['type'],
+                        'Дни запаса': f"{config['min_days']}-{config['max_days']}",
+                        'Описание': config['description']
+                    })
+            
+            if level_warehouses:
+                st.dataframe(pd.DataFrame(level_warehouses), use_container_width=True)
+    
+    # Тест интеграции
+    if has_multiple_files and st.button("🧪 Протестировать извлечение цен"):
+        with st.spinner("📊 Тестирую извлечение цен..."):
+            prices_df = collect_prices_from_multiple_ads_files(system.multiple_files_data)
+            
+            if not prices_df.empty:
+                st.success(f"✅ Извлечено {len(prices_df)} ценовых записей")
+                
+                # Показываем статистику
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Товаров с ценами", (prices_df['цена'] > 0).sum())
+                with col2:
+                    st.metric("Уникальных товаров", prices_df['наименование'].nunique())
+                with col3:
+                    st.metric("Филиалов", prices_df['филиал'].nunique())
+                
+                # Показываем превью
+                st.subheader("👀 Превью ценовых данных")
+                st.dataframe(prices_df.head(10), use_container_width=True)
+            else:
+                st.error("❌ Не удалось извлечь ценовые данные")
+
+
+if __name__ == "__main__":
+    print("📦 Модуль интеграции цен для анализа складов загружен")
+    print("🏪 Поддерживает иерархическую структуру складов")
+    print("💰 Автоматическое извлечение цен из 12-й колонки ADS файлов")

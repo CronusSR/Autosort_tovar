@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(python test_warehouse_integration.py)",
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(touch:*)",
+      "Bash(python:*)",
+      "Bash(pip3 install:*)",
+      "Bash(mv:*)"
+    ],
+    "deny": []
+  }
+}

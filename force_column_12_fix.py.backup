@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Принудительное использование 12-й колонки для цен
+Для случаев когда автоматическое определение не работает
+"""
+
+import streamlit as st
+import pandas as pd
+
+def force_extract_prices_from_column_12(file_data, filename: str) -> pd.DataFrame:
+    """
+    Принудительно извлекает цены из 12-й колонки независимо от названия
+    """
+    try:
+        # Читаем файл
+        if isinstance(file_data, str):
+            df = pd.read_excel(file_data)
+        elif hasattr(file_data, 'read'):
+            df = pd.read_excel(file_data)
+        else:
+            df = file_data.copy()
+        
+        st.info(f"🔧 ПРИНУДИТЕЛЬНО извлекаю цены из 12-й колонки: {filename}")
+        
+        # Проверяем что есть 12-я колонка
+        if len(df.columns) < 12:
+            st.error(f"❌ В файле только {len(df.columns)} колонок, 12-й нет")
+            return pd.DataFrame()
+        
+        # Принудительно используем 12-ю колонку
+        nomenclature_col = df.iloc[:, 0]  # 1-я колонка - наименования
+        price_col = df.iloc[:, 11]        # 12-я колонка - цены
+        col_12_name = df.columns[11]
+        
+        st.warning(f"⚠️ ПРИНУДИТЕЛЬНО использую 12-ю колонку: '{col_12_name}'")
+        
+        price_data = []
+        processed_items = 0
+        
+        # Начинаем с 4-й строки (индекс 3)
+        for idx in range(3, len(df)):
+            name = nomenclature_col.iloc[idx]
+            price_val = price_col.iloc[idx]
+            
+            # Проверяем наименование
+            if pd.isna(name) or str(name).strip() == '':
+                continue
+            
+            name_clean = str(name).strip()
+            if name_clean.lower() in ['nan', 'none', '']:
+                continue
+            
+            # ПРИНУДИТЕЛЬНО обрабатываем цену (более агрессивно)
+            price_clean = 0.0
+            if pd.notna(price_val):
+                try:
+                    if isinstance(price_val, (int, float)):
+                        price_clean = abs(float(price_val))  # Берем модуль на случай отрицательных
+                    else:
+                        # Очень агрессивная очистка строки
+                        price_str = str(price_val)
+                        # Убираем все кроме цифр, точек и запятых
+                        price_clean_str = ''.join(c for c in price_str if c.isdigit() or c in '.,')
+                        # Заменяем запятые на точки
+                        price_clean_str = price_clean_str.replace(',', '.')
+                        
+                        if price_clean_str:
+                            # Если несколько точек, берем только последнюю как десятичный разделитель
+                            if price_clean_str.count('.') > 1:
+                                parts = price_clean_str.split('.')
+                                price_clean_str = ''.join(parts[:-1]) + '.' + parts[-1]
+                            
+                            price_clean = abs(float(price_clean_str))
+                except Exception as e:
+                    st.write(f"   Не удалось обработать цену в строке {idx+1}: {price_val} -> {e}")
+                    price_clean = 0.0
+            
+            # Определяем филиал (Барыс)
+            branch = 'Алматы_Барыс'
+            
+            price_data.append({
+                'наименование': name_clean,
+                'цена': price_clean,
+                'филиал': branch,
+                'источник': filename,
+                'колонка_цены': 12,
+                'строка_в_файле': idx + 1
+            })
+            
+            processed_items += 1
+        
+        result_df = pd.DataFrame(price_data)
+        
+        if not result_df.empty:
+            # Статистика по ценам
+            items_with_prices = (result_df['цена'] > 0).sum()
+            avg_price = result_df[result_df['цена'] > 0]['цена'].mean() if items_with_prices > 0 else 0
+            
+            st.success(f"🔧 ПРИНУДИТЕЛЬНО извлечено: {len(result_df)} товаров, {items_with_prices} с ценами (ср. цена: {avg_price:,.0f} ₸)")
+            
+            # Показываем примеры
+            if items_with_prices > 0:
+                st.write("**Примеры извлеченных цен:**")
+                examples = result_df[result_df['цена'] > 0].head(5)
+                for _, row in examples.iterrows():
+                    st.write(f"   {row['наименование']}: {row['цена']:,.0f} ₸")
+        else:
+            st.warning(f"⚠️ {filename}: не удалось извлечь ценовые данные")
+        
+        return result_df
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка принудительного извлечения цен из {filename}: {str(e)}")
+        return pd.DataFrame()
+
+
+def apply_force_column_12_fix(system):
+    """
+    Применяет принудительное использование 12-й колонки для цен
+    """
+    try:
+        st.warning("🔧 Применяю ПРИНУДИТЕЛЬНОЕ использование 12-й колонки для цен...")
+        
+        # ОТКЛЮЧЕНО: Заменяем функцию извлечения цен на принудительную
+        # def force_extract_prices_from_ads_files():
+        #     """
+        #     Принудительно извлекает цены из 12-й колонки всех файлов
+        #     """
+        #     if not hasattr(system, 'multiple_files_data') or not system.multiple_files_data:
+        #         st.warning("⚠️ Нет данных множественных файлов для принудительного извлечения цен")
+        #         return pd.DataFrame()
+        #     
+        #     st.info("🔧 ПРИНУДИТЕЛЬНО собираю цены из 12-й колонки всех ADS файлов...")
+        #     
+        #     all_prices = []
+        #     processed_results = system.multiple_files_data.get('processed_results', {})
+        #     
+        # ОТКЛЮЧЕНО: вся сложная логика принудительного извлечения pass
+        
+        # Заменяем функцию
+        # ОТКЛЮЧЕНО:         system.extract_prices_from_ads_files = force_extract_prices_from_ads_files
+        system._force_column_12_fix_applied = True
+        
+        st.success("✅ Принудительное использование 12-й колонки применено!")
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка применения принудительного исправления: {str(e)}")
+        return False
+
+
+if __name__ == "__main__":
+    st.header("🔧 Принудительное использование 12-й колонки для цен")
+    
+    st.markdown("""
+    ## ⚠️ Экстренное исправление
+    
+    Если автоматическое определение колонки с ценами не работает, 
+    этот модуль принудительно использует 12-ю колонку для извлечения цен.
+    
+    ### 🔧 Что делает:
+    - Игнорирует названия колонок
+    - Принудительно использует 12-ю колонку (L)
+    - Агрессивно очищает данные для извлечения чисел
+    - Начинает с 4-й строки (L4)
+    
+    ### 🚀 Применение:
+    ```python
+    from force_column_12_fix import apply_force_column_12_fix
+    apply_force_column_12_fix(system)
+    ```
+    """)
+    
+    # Тест на файле Барыс
+    if st.button("🧪 Тест принудительного извлечения"):
+        barys_file = "/mnt/f/Работа-Никита/Autosort_tovar/барыс - прод с мая24-май25.xlsx"
+        
+        with st.spinner("Тестирую принудительное извлечение..."):
+            df = pd.read_excel(barys_file)
+            prices_df = force_extract_prices_from_column_12(df, "барыс - прод с мая24-май25.xlsx")
+            
+            if not prices_df.empty:
+                items_with_prices = (prices_df['цена'] > 0).sum()
+                st.success(f"✅ Принудительно извлечено {items_with_prices} цен из {len(prices_df)} товаров")

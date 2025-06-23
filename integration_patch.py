@@ -236,15 +236,16 @@ def process_files_safe(system, uploaded_files):
         st.error(f"❌ Ошибка обработки файлов: {str(e)}")
 
 def process_single_file_safe(file_content: bytes, filename: str, branch_name: str) -> Dict:
-    """Безопасная обработка одного файла"""
+    """Безопасная обработка одного файла с извлечением цен"""
     try:
         df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
         
         # Параметры обработки
         start_col_index = 12  # M
         end_col_index = 28    # AB
-        start_row = 3         # Строка 4
+        start_row = 2         # Строка 3 (ИСПРАВЛЕНО)
         nomenclature_col = 1  # B
+        price_col = 11        # L (12-я колонка, индекс 11) - "Посл. закупка"
         
         # Проверки
         if df.shape[1] < end_col_index:
@@ -268,11 +269,25 @@ def process_single_file_safe(file_content: bytes, filename: str, branch_name: st
         
         # Обрабатываем данные
         sales_data = []
+        prices_found = 0
+        
         for idx in nomenclature_clean.index:
             try:
                 item_name = str(nomenclature_clean.loc[idx]).strip()
                 row_sales = df.iloc[idx, start_col_index:end_col_index].copy()
                 row_numeric = pd.to_numeric(row_sales, errors='coerce').fillna(0)
+                
+                # Извлекаем цену из колонки L (12-я колонка)
+                price_value = 0
+                if df.shape[1] > price_col:
+                    try:
+                        price_raw = df.iloc[idx, price_col]
+                        if pd.notna(price_raw):
+                            price_value = float(price_raw)
+                            if price_value > 0:
+                                prices_found += 1
+                    except (ValueError, TypeError):
+                        price_value = 0
                 
                 average_value = row_numeric.mean()
                 ads_value = average_value / 30
@@ -282,6 +297,7 @@ def process_single_file_safe(file_content: bytes, filename: str, branch_name: st
                     'ads': ads_value,
                     'average_value': average_value,
                     'total_sales': row_numeric.sum(),
+                    'last_purchase_price': price_value,  # Добавляем цену
                     'branch': branch_name,
                     'source_file': filename
                 })
@@ -298,7 +314,10 @@ def process_single_file_safe(file_content: bytes, filename: str, branch_name: st
             'total_items': len(result_df),
             'total_ads': result_df['ads'].sum(),
             'average_ads': result_df['ads'].mean(),
+            'prices_found': prices_found,
+            'price_coverage': (prices_found / len(result_df) * 100) if len(result_df) > 0 else 0,
             'data': result_df,
+            'source_data': df,  # Сохраняем исходные данные!
             'branch_name': branch_name
         }
         
@@ -325,14 +344,20 @@ def combine_data_safe(system):
         combined_df = pd.concat(all_dataframes, ignore_index=True)
         initial_count = len(combined_df)
         
-        # Объединяем дубликаты
-        combined_df = combined_df.groupby('номенклатура').agg({
+        # Объединяем дубликаты с учетом цен
+        agg_funcs = {
             'ads': 'sum',
             'average_value': 'sum', 
             'total_sales': 'sum',
             'branch': lambda x: ', '.join(x.unique()),
             'source_file': lambda x: ', '.join(x.unique())
-        }).reset_index()
+        }
+        
+        # Добавляем агрегацию цен если колонка существует
+        if 'last_purchase_price' in combined_df.columns:
+            agg_funcs['last_purchase_price'] = 'mean'  # Берем среднюю цену
+        
+        combined_df = combined_df.groupby('номенклатура').agg(agg_funcs).reset_index()
         
         final_count = len(combined_df)
         duplicates = initial_count - final_count
@@ -340,16 +365,23 @@ def combine_data_safe(system):
         # Сохраняем
         system.multiple_files_data['combined_data'] = combined_df
         
-        # Обновляем основную систему
+        # Обновляем основную систему с ценами
         if hasattr(system, 'calculated_ads'):
-            system.calculated_ads = combined_df[['номенклатура', 'ads', 'average_value', 'total_sales']].copy()
+            # Включаем цены в calculated_ads если они есть
+            cols_to_copy = ['номенклатура', 'ads', 'average_value', 'total_sales']
+            if 'last_purchase_price' in combined_df.columns:
+                cols_to_copy.append('last_purchase_price')
+            system.calculated_ads = combined_df[cols_to_copy].copy()
         if hasattr(system, 'sales_data'):
             system.sales_data = combined_df.copy()
         
-        # Логируем
-        system.multiple_files_data['processing_log'].append(
-            f"🔄 Объединение: {final_count} товаров (объединено {duplicates} дубликатов)"
-        )
+        # Логируем с информацией о ценах
+        log_message = f"🔄 Объединение: {final_count} товаров (объединено {duplicates} дубликатов)"
+        if 'last_purchase_price' in combined_df.columns:
+            prices_available = (combined_df['last_purchase_price'] > 0).sum()
+            log_message += f", цены: {prices_available}/{final_count}"
+        
+        system.multiple_files_data['processing_log'].append(log_message)
         
     except Exception as e:
         st.error(f"❌ Ошибка объединения: {str(e)}")
@@ -366,8 +398,8 @@ def show_results_safe(system):
             st.warning("Нет объединенных данных")
             return
         
-        # Статистика
-        col1, col2, col3, col4 = st.columns(4)
+        # Статистика с ценами
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             processed_results = system.multiple_files_data.get('processed_results', {})
@@ -385,13 +417,24 @@ def show_results_safe(system):
             avg_ads = combined_data['ads'].mean()
             st.metric("Средний ADS", f"{avg_ads:.4f}")
         
-        # Топ товары
+        with col5:
+            # Показываем статистику по ценам
+            if 'last_purchase_price' in combined_data.columns:
+                prices_available = (combined_data['last_purchase_price'] > 0).sum()
+                price_coverage = (prices_available / len(combined_data) * 100) if len(combined_data) > 0 else 0
+                st.metric("Цены найдены", f"{prices_available}/{len(combined_data)} ({price_coverage:.1f}%)")
+            else:
+                st.metric("Цены", "Не извлечены")
+        
+        # Топ товары с ценами
         st.markdown("**🏆 Топ-10 товаров по суммарному ADS:**")
         
         if len(combined_data) > 0:
             display_columns = ['номенклатура', 'ads']
             if 'branch' in combined_data.columns:
                 display_columns.append('branch')
+            if 'last_purchase_price' in combined_data.columns:
+                display_columns.append('last_purchase_price')
             
             available_columns = [col for col in display_columns if col in combined_data.columns]
             top_items = combined_data.nlargest(10, 'ads')[available_columns].copy()
@@ -400,12 +443,19 @@ def show_results_safe(system):
             column_mapping = {
                 'номенклатура': 'Товар',
                 'ads': 'Суммарный ADS',
-                'branch': 'Филиалы'
+                'branch': 'Филиалы',
+                'last_purchase_price': 'Цена закупки (₸)'
             }
             
             for old_name, new_name in column_mapping.items():
                 if old_name in top_items.columns:
                     top_items = top_items.rename(columns={old_name: new_name})
+            
+            # Форматируем цены
+            if 'Цена закупки (₸)' in top_items.columns:
+                top_items['Цена закупки (₸)'] = top_items['Цена закупки (₸)'].apply(
+                    lambda x: f"{x:,.0f}" if x > 0 else "Нет данных"
+                )
             
             st.dataframe(top_items, use_container_width=True)
         

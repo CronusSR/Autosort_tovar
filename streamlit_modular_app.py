@@ -74,6 +74,17 @@ from real_fix_for_your_system import (
 
 from warehouse_analysis import warehouse_analysis_page, add_warehouse_analysis_to_system
 
+# 🚀 УЛУЧШЕННЫЙ АНАЛИЗ СКЛАДОВ
+try:
+    from enhanced_warehouse_interface import apply_enhanced_warehouse_interface
+    from warehouse_system_integration import integrate_complete_warehouse_system
+    from warehouse_complete_solution import apply_complete_warehouse_solution
+    from quick_warehouse_upgrade import add_quick_upgrade_to_menu, create_quick_upgrade_page
+    ENHANCED_WAREHOUSE_AVAILABLE = True
+except ImportError:
+    ENHANCED_WAREHOUSE_AVAILABLE = False
+    print("⚠️ Модули улучшенного анализа складов не найдены")
+
 
 
 # Конфигурация страницы
@@ -131,14 +142,24 @@ def get_store_type_and_city(branch_name: str) -> tuple:
     return city, store_type
 
 def init_system():
-    """Инициализация системы с полным исправлением"""
+    """Инициализация системы с полным исправлением + улучшенный анализ складов"""
     if 'inventory_system' not in st.session_state:
         st.session_state.inventory_system = ModularInventorySystem()
         
         # 🔧 ПОЛНОЕ ИСПРАВЛЕНИЕ ВСЕХ МЕТОДОВ ЗАГРУЗКИ
         apply_complete_fix_to_system(st.session_state.inventory_system)
         add_warehouse_analysis_to_system(st.session_state.inventory_system)
-
+        
+        # 🚀 АВТОМАТИЧЕСКОЕ ПРИМЕНЕНИЕ УЛУЧШЕНИЙ АНАЛИЗА СКЛАДОВ
+        if ENHANCED_WAREHOUSE_AVAILABLE:
+            try:
+                # Базовое решение складов
+                apply_complete_warehouse_solution(st.session_state.inventory_system)
+                # Улучшенный интерфейс
+                apply_enhanced_warehouse_interface(st.session_state.inventory_system)
+                print("✅ Улучшенный анализ складов автоматически применен")
+            except Exception as e:
+                print(f"⚠️ Ошибка применения улучшений складов: {e}")
         
     return st.session_state.inventory_system
 
@@ -2575,6 +2596,10 @@ def main():
         show_money_integration_status(system)
         integration_instructions()
     
+    # 🚀 БЫСТРЫЙ АПГРЕЙД СКЛАДОВ в sidebar
+    if ENHANCED_WAREHOUSE_AVAILABLE:
+        add_quick_upgrade_to_menu()
+    
     # Заголовок
     st.title("📦 Модульная система анализа товарных запасов")
     st.markdown("*Пошаговый анализ с выбором типа операции*")
@@ -2601,6 +2626,7 @@ def main():
                 "🔤📊 ABC подкатегории",
                 "📋 MIN запасы",
                 "🏪 Анализ складов",
+                "🚀 Улучшенный анализ складов",
                 "⚖️ Сравнение остатков",
                 "📦 MAX остатки",
                 "🚚 Рекомендации по перемещениям", 
@@ -2630,9 +2656,25 @@ def main():
         else:
             st.button("📤 Экспорт", key="quick_export")
     
+    # Обработка переходов между страницами
+    if st.session_state.get('goto_upgrade', False):
+        st.session_state.goto_upgrade = False
+        page = "⚡ Обновление складов"
+    elif st.session_state.get('goto_warehouse', False):
+        st.session_state.goto_warehouse = False
+        page = "🏪 Анализ складов"
+    elif st.session_state.get('goto_enhanced_warehouse', False):
+        st.session_state.goto_enhanced_warehouse = False
+        page = "🚀 Улучшенный анализ складов"
+    
     # Основной контент в зависимости от выбранной страницы
     # ТЕПЕРЬ переменная page уже определена выше
-    if page == "🔤 ABC анализ":
+    if page == "⚡ Обновление складов":
+        if ENHANCED_WAREHOUSE_AVAILABLE:
+            create_quick_upgrade_page(system)
+        else:
+            st.error("❌ Модули обновления не найдены")
+    elif page == "🔤 ABC анализ":
         abc_analysis_page_updated(system)
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
@@ -2644,6 +2686,14 @@ def main():
         min_stock_calculation_page(system)
     elif page == "🏪 Анализ складов":
         warehouse_analysis_page(system)
+    elif page == "🚀 Улучшенный анализ складов":
+        # Новая улучшенная страница анализа складов
+        if ENHANCED_WAREHOUSE_AVAILABLE:
+            from warehouse_system_integration import create_warehouse_integration_page
+            create_warehouse_integration_page(system)
+        else:
+            st.error("❌ Модули улучшенного анализа складов не найдены")
+            st.info("💡 Используйте обычный 'Анализ складов'")
     elif page == "⚖️ Сравнение остатков":
         if PRICE_FEATURES_AVAILABLE:
             stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ

@@ -572,11 +572,217 @@ def add_warehouse_analysis_to_system(system):
 # ⚠️ ВАЖНО: Эта функция должна быть НА ЭТОМ УРОВНЕ, не внутри предыдущей!
 def warehouse_analysis_page(system):
     """
-    Улучшенная страница анализа складов с интеграцией цен из ADS файлов
-    Заменена на enhanced_warehouse_analysis_page для поддержки ценовой интеграции
+    🚀 ПОЛНОСТЬЮ УЛУЧШЕННАЯ СТРАНИЦА АНАЛИЗА СКЛАДОВ
+    С ценами, MIN/MAX остатками, объяснением расчетов и полным отображением товаров
     """
-    from enhanced_warehouse_analysis import enhanced_warehouse_analysis_page
-    enhanced_warehouse_analysis_page(system)
+    
+    st.header("📦 Анализ остатков по складам")
+    st.markdown("*Улучшенная версия с ценами, MIN/MAX и полным отображением товаров*")
+    
+    # Автоматически применяем улучшения если не применены
+    try:
+        if not hasattr(system, '_enhanced_warehouse_interface_applied'):
+            from enhanced_warehouse_interface import apply_enhanced_warehouse_interface
+            apply_enhanced_warehouse_interface(system)
+            
+        if not hasattr(system, '_warehouse_complete_solution_applied'):
+            from warehouse_complete_solution import apply_complete_warehouse_solution
+            apply_complete_warehouse_solution(system)
+    except ImportError:
+        st.warning("⚠️ Модули улучшений не найдены, используется базовая версия")
+    
+    # Проверяем ADS данные
+    if not hasattr(system, 'calculated_ads') or system.calculated_ads is None:
+        st.error("❌ Сначала рассчитайте ADS на странице 'ADS расчет'")
+        return
+    
+    st.success(f"✅ ADS данные найдены: {len(system.calculated_ads)} товаров")
+    
+    # Объяснение расчета "к заказу"
+    if hasattr(system, 'show_order_calculation_help'):
+        system.show_order_calculation_help()
+    else:
+        st.info("💡 Объяснение расчета 'к заказу' доступно после применения улучшений")
+    
+    st.markdown("---")
+    
+    # Поиск ценовых данных
+    st.subheader("💰 Ценовые данные")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔍 Найти цены в системе"):
+            if hasattr(system, 'find_and_display_prices'):
+                system.find_and_display_prices()
+            else:
+                st.warning("Функция поиска цен недоступна")
+    
+    with col2:
+        if hasattr(system, 'enhanced_warehouse_interface'):
+            price_count = len(system.enhanced_warehouse_interface.price_data)
+            if price_count > 0:
+                st.metric("Найдено цен", f"{price_count:,}")
+            else:
+                st.metric("Найдено цен", "0")
+    
+    st.markdown("---")
+    
+    # Настройки анализа
+    st.subheader("⚙️ Параметры анализа")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        min_days = st.number_input(
+            "MIN дней запаса:",
+            min_value=5,
+            max_value=60,
+            value=15,
+            help="Минимальный запас в днях"
+        )
+    
+    with col2:
+        max_days = st.number_input(
+            "MAX дней запаса:",
+            min_value=20,
+            max_value=120,
+            value=45,
+            help="Максимальный запас в днях"
+        )
+    
+    with col3:
+        debug_mode = st.checkbox(
+            "Режим отладки",
+            value=False,
+            help="Показывать подробную информацию"
+        )
+    
+    # Загрузка файла остатков
+    st.subheader("📂 Загрузка файла остатков")
+    
+    uploaded_file = st.file_uploader(
+        "Выберите файл остатков:",
+        type=['xlsx', 'xls'],
+        help="Поддерживаются файлы Excel с любой структурой"
+    )
+    
+    if uploaded_file:
+        
+        # Читаем файл с помощью умного ридера
+        try:
+            with st.spinner("Читаем файл остатков..."):
+                if hasattr(system, 'read_remains_file_exact'):
+                    remains_df = system.read_remains_file_exact(uploaded_file, debug_mode=debug_mode)
+                else:
+                    # Fallback к обычному анализатору
+                    if hasattr(system, 'warehouse_analyzer'):
+                        remains_df = system.warehouse_analyzer.parse_remains_file(uploaded_file)
+                    else:
+                        st.error("❌ Анализатор складов не инициализирован")
+                        return
+            
+            if not remains_df.empty:
+                st.success(f"✅ Файл прочитан успешно: {len(remains_df)} товаров")
+                
+                # Показываем превью данных
+                with st.expander("👀 Превью данных остатков", expanded=False):
+                    st.dataframe(remains_df.head(10), use_container_width=True)
+                
+                # Кнопка запуска анализа
+                st.markdown("---")
+                
+                if st.button("🔍 Запустить улучшенный анализ складов", type="primary"):
+                    
+                    with st.spinner("Выполняем детальный анализ..."):
+                        
+                        # Запускаем анализ
+                        if hasattr(system, 'analyze_warehouse_stock_with_details'):
+                            analysis_results = system.analyze_warehouse_stock_with_details(
+                                remains_df,
+                                system.calculated_ads,
+                                min_days=min_days,
+                                max_days=max_days
+                            )
+                        else:
+                            # Fallback к обычному анализатору
+                            if hasattr(system, 'warehouse_analyzer'):
+                                analysis_results = system.warehouse_analyzer.analyze_warehouse_stock(
+                                    remains_df, system.calculated_ads, min_days, max_days
+                                )
+                            else:
+                                st.error("❌ Метод анализа не найден")
+                                return
+                        
+                        if analysis_results:
+                            
+                            # Сохраняем результаты для улучшенного интерфейса
+                            system._last_warehouse_analysis = analysis_results
+                            
+                            st.success("✅ Анализ завершен!")
+                            
+                            # Показываем улучшенные результаты если доступны
+                            if hasattr(system, 'display_enhanced_results'):
+                                st.subheader("🚀 Улучшенные результаты анализа")
+                                system.display_enhanced_results(analysis_results, show_prices=True)
+                                
+                                # Ценовая сводка
+                                if hasattr(system, 'show_price_integration_summary'):
+                                    system.show_price_integration_summary(analysis_results)
+                            else:
+                                # Fallback к базовому отображению
+                                st.subheader("📊 Результаты анализа")
+                                display_warehouse_analysis_results_simple(analysis_results, system)
+                        
+                        else:
+                            st.error("❌ Не удалось выполнить анализ")
+            
+            else:
+                st.error("❌ Не удалось прочитать файл или файл пуст")
+                
+        except Exception as e:
+            st.error(f"❌ Ошибка чтения файла: {str(e)}")
+            if debug_mode:
+                st.error(traceback.format_exc())
+    
+    else:
+        st.info("📁 Загрузите файл остатков для начала анализа")
+
+
+def display_warehouse_analysis_results_simple(analysis_results, system):
+    """Простое отображение результатов если улучшенный интерфейс недоступен"""
+    
+    if not analysis_results:
+        st.error("❌ Нет данных для отображения")
+        return
+    
+    # Базовая статистика
+    total_items = len(analysis_results)
+    items_with_orders = sum(1 for item in analysis_results if item.get('total_order_quantity', 0) > 0)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Всего товаров", f"{total_items:,}")
+    with col2:
+        st.metric("Товаров к заказу", f"{items_with_orders:,}")
+    
+    # Простая таблица результатов (показываем первые 100)
+    display_data = []
+    for item in analysis_results[:100]:
+        display_data.append({
+            'Номенклатура': item['номенклатура'][:50] + "..." if len(item['номенклатура']) > 50 else item['номенклатура'],
+            'ADS': f"{item.get('ads', 0):.2f}",
+            'Общий остаток': f"{item.get('total_stock', 0):.0f}",
+            'К заказу': f"{item.get('total_order_quantity', 0):.0f}"
+        })
+    
+    if display_data:
+        df = pd.DataFrame(display_data)
+        st.dataframe(df, use_container_width=True)
+        
+        if len(analysis_results) > 100:
+            st.info(f"📄 Показано первые 100 из {len(analysis_results)} товаров")
+    
+    st.info("💡 Для полного функционала обновите систему до улучшенной версии")
     
 
 def display_warehouse_analysis_results(dashboard_data, recommendations, analysis):

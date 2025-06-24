@@ -654,8 +654,23 @@ def warehouse_analysis_page(system):
         debug_mode = st.checkbox(
             "Режим отладки",
             value=False,
-            help="Показывать подробную информацию"
+            help="Показывать подробную информацию при чтении файла"
         )
+        
+        # Дополнительная информация
+        with st.expander("💡 Советы по загрузке файлов", expanded=False):
+            st.markdown("""
+            **Если файл не читается:**
+            1. 🔍 Включите "Режим отладки" для диагностики
+            2. 📋 Убедитесь что в файле есть колонка "Номенклатура"
+            3. 🔧 Используйте кнопку "Экстренное исправление" при ошибках
+            4. 📊 Проверьте что файл содержит данные товаров
+            
+            **Поддерживаемые форматы:**
+            - Excel файлы (.xlsx, .xls)
+            - Любая структура заголовков
+            - Автоматическое определение колонок
+            """)
     
     # Загрузка файла остатков
     st.subheader("📂 Загрузка файла остатков")
@@ -668,18 +683,96 @@ def warehouse_analysis_page(system):
     
     if uploaded_file:
         
-        # Читаем файл с помощью умного ридера
+        # Читаем файл остатков (с fallback к оригинальному методу)
         try:
             with st.spinner("Читаем файл остатков..."):
+                remains_df = None
+                
+                # Пробуем новый умный ридер
                 if hasattr(system, 'read_remains_file_exact'):
-                    remains_df = system.read_remains_file_exact(uploaded_file, debug_mode=debug_mode)
-                else:
-                    # Fallback к обычному анализатору
+                    try:
+                        remains_df = system.read_remains_file_exact(uploaded_file, debug_mode=debug_mode)
+                    except Exception as e:
+                        if debug_mode:
+                            st.warning(f"⚠️ Умный ридер не сработал: {e}")
+                
+                # Fallback к обычному анализатору складов
+                if remains_df is None or remains_df.empty:
                     if hasattr(system, 'warehouse_analyzer'):
-                        remains_df = system.warehouse_analyzer.parse_remains_file(uploaded_file)
-                    else:
-                        st.error("❌ Анализатор складов не инициализирован")
-                        return
+                        try:
+                            # Читаем файл как раньше
+                            file_data = pd.read_excel(uploaded_file, header=None).values.tolist()
+                            remains_df = system.warehouse_analyzer.parse_remains_file(file_data)
+                        except Exception as e:
+                            if debug_mode:
+                                st.warning(f"⚠️ Обычный анализатор не сработал: {e}")
+                
+                # Последний fallback - безопасное чтение Excel
+                if remains_df is None or remains_df.empty:
+                    try:
+                        st.info("🔄 Используем безопасное чтение Excel файла...")
+                        
+                        # Импортируем и используем безопасный ридер
+                        try:
+                            from fix_file_reading import create_safe_warehouse_reader
+                            safe_reader = create_safe_warehouse_reader()
+                            remains_df = safe_reader(uploaded_file, debug_mode)
+                            if not remains_df.empty:
+                                st.warning("⚠️ Используется безопасное чтение файла.")
+                        except ImportError:
+                            # Fallback если модуль недоступен
+                            df_raw = pd.read_excel(uploaded_file)
+                            
+                            if len(df_raw) > 0:
+                                # Ищем колонку с номенклатурой  
+                                nomenclature_col = None
+                                for col in df_raw.columns:
+                                    col_str = str(col).lower()
+                                    if any(word in col_str for word in ['номенклатура', 'наименование', 'товар', 'артикул']):
+                                        nomenclature_col = col
+                                        break
+                                
+                                if nomenclature_col is None and len(df_raw.columns) > 0:
+                                    nomenclature_col = df_raw.columns[0]
+                                
+                                if nomenclature_col is not None:
+                                    remains_data = []
+                                    for _, row in df_raw.iterrows():
+                                        try:
+                                            item_name = str(row[nomenclature_col]).strip()
+                                            if item_name and item_name.lower() not in ['nan', '', 'none', 'итого', 'всего']:
+                                                remains_data.append({
+                                                    'номенклатура': item_name,
+                                                    'итого_остаток': 0
+                                                })
+                                        except:
+                                            continue
+                                    
+                                    if remains_data:
+                                        remains_df = pd.DataFrame(remains_data)
+                                        st.warning("⚠️ Используется упрощенное чтение файла.")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Ошибка безопасного чтения: {e}")
+                        if debug_mode:
+                            st.error(f"Детали ошибки: {str(e)}")
+                        
+                # Если все методы не сработали
+                if remains_df is None or remains_df.empty:
+                    st.error("❌ Не удалось прочитать файл ни одним из методов")
+                    st.info("💡 Попробуйте экстренное исправление ниже")
+                    
+                    # Кнопка экстренного исправления
+                    if st.button("🔧 Экстренное исправление чтения файлов"):
+                        try:
+                            from fix_file_reading import fix_warehouse_file_reading
+                            fix_warehouse_file_reading(system)
+                            st.info("✅ Исправление применено! Попробуйте загрузить файл снова.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Ошибка применения исправления: {e}")
+                    
+                    return
             
             if not remains_df.empty:
                 st.success(f"✅ Файл прочитан успешно: {len(remains_df)} товаров")

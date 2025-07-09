@@ -327,16 +327,24 @@ class ModularInventorySystem:
             if len(ads_df) > 1:
                 ads_df = ads_df.iloc[:-1].copy()
             
+            # 🔧 НОВОЕ: Автоматическое заполнение ADS=0 по подкатегориям
+            print("🔄 Применяем автозаполнение по подкатегориям для товаров с ADS=0...")
+            filled_count = self._apply_subcategory_autofill(ads_df)
+            if filled_count > 0:
+                print(f"✅ Автозаполнено {filled_count} товаров с ADS=0 средними значениями по подкатегориям")
+            
             # Сохраняем результат
             self.calculated_ads = ads_df
             self.sales_data = ads_df  # Для совместимости
             
-            # Статистика
+            # Статистика с учетом автозаполнения
             positive_ads_count = len(ads_df[ads_df['ads'] > 0])
+            zero_ads_count = len(ads_df[ads_df['ads'] == 0])
             
             print(f"✅ Обработка завершена:")
             print(f"   Товаров: {len(ads_df)}")
-            print(f"   С положительным ADS: {positive_ads_count}")
+            print(f"   С положительным ADS: {positive_ads_count} (после автозаполнения)")
+            print(f"   С ADS=0: {zero_ads_count}")
             print(f"   📊 Общий ADS: {ads_df['ads'].sum():.2f}")
             print(f"   💰 ЦЕНЫ: найдено {prices_found} из {len(ads_df)} товаров")  # 🔧 НОВОЕ
             
@@ -367,6 +375,91 @@ class ModularInventorySystem:
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': f"Ошибка загрузки файла: {str(e)}"}
+    
+    def _apply_subcategory_autofill(self, ads_df):
+        """
+        Применяет автозаполнение ADS=0 товаров средними значениями по подкатегориям
+        """
+        filled_count = 0
+        
+        try:
+            # Проверяем наличие данных
+            if ads_df is None or ads_df.empty:
+                return 0
+            
+            # Проверяем наличие нужных колонок
+            if 'номенклатура' not in ads_df.columns or 'ads' not in ads_df.columns:
+                print("⚠️ Отсутствуют необходимые колонки для автозаполнения")
+                return 0
+            
+            # Собираем ADS по подкатегориям (только товары с ADS > 0)
+            subcategory_ads = {}
+            for _, row in ads_df.iterrows():
+                try:
+                    item_name = str(row['номенклатура'])
+                    ads_value = float(row['ads']) if pd.notna(row['ads']) else 0.0
+                    
+                    if ads_value > 0:
+                        # Извлекаем подкатегорию из названия (первые 2 слова)
+                        words = item_name.split()
+                        subcategory = ' '.join(words[:2]) if len(words) >= 2 else words[0] if words else 'Общая'
+                        
+                        if subcategory not in subcategory_ads:
+                            subcategory_ads[subcategory] = []
+                        subcategory_ads[subcategory].append(ads_value)
+                except (ValueError, TypeError):
+                    continue
+            
+            # Рассчитываем средние по подкатегориям
+            subcategory_averages = {}
+            for subcategory, ads_values in subcategory_ads.items():
+                if ads_values:
+                    subcategory_averages[subcategory] = sum(ads_values) / len(ads_values)
+            
+            print(f"📊 Найдено {len(subcategory_averages)} подкатегорий с положительным ADS")
+            
+            # Заполняем товары с ADS=0
+            for idx, row in ads_df.iterrows():
+                try:
+                    ads_value = float(row['ads']) if pd.notna(row['ads']) else 0.0
+                    
+                    if ads_value == 0:
+                        item_name = str(row['номенклатура'])
+                        words = item_name.split()
+                        
+                        # Пробуем несколько вариантов поиска подкатегории
+                        found_replacement = False
+                        
+                        # 1. Точная подкатегория (2 слова)
+                        subcategory = ' '.join(words[:2]) if len(words) >= 2 else words[0] if words else 'Общая'
+                        if subcategory in subcategory_averages:
+                            ads_df.at[idx, 'ads'] = subcategory_averages[subcategory]
+                            filled_count += 1
+                            found_replacement = True
+                        
+                        # 2. Первое слово (более широкая категория)
+                        elif not found_replacement and words:
+                            first_word = words[0]
+                            if first_word in subcategory_averages:
+                                ads_df.at[idx, 'ads'] = subcategory_averages[first_word]
+                                filled_count += 1
+                                found_replacement = True
+                        
+                        # 3. Минимальный ADS (5% от общего среднего)
+                        if not found_replacement and subcategory_averages:
+                            overall_avg = sum(subcategory_averages.values()) / len(subcategory_averages)
+                            if overall_avg > 0:
+                                ads_df.at[idx, 'ads'] = max(0.01, overall_avg * 0.05)
+                                filled_count += 1
+                                
+                except (ValueError, TypeError, KeyError):
+                    continue
+            
+            return filled_count
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка автозаполнения: {str(e)}")
+            return 0
         
     def apply_ads_price_fix_to_system(system):
         """

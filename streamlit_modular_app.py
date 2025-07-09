@@ -72,18 +72,10 @@ from real_fix_for_your_system import (
     diagnose_system_issues
 )
 
-from warehouse_analysis import warehouse_analysis_page, add_warehouse_analysis_to_system
+from warehouse_analysis_fixed_mapping import warehouse_analysis_page, add_warehouse_analysis_to_system
 
-# 🚀 УЛУЧШЕННЫЙ АНАЛИЗ СКЛАДОВ
-try:
-    from enhanced_warehouse_interface import apply_enhanced_warehouse_interface
-    from warehouse_system_integration import integrate_complete_warehouse_system
-    from warehouse_complete_solution import apply_complete_warehouse_solution
-    from quick_warehouse_upgrade import add_quick_upgrade_to_menu, create_quick_upgrade_page
-    ENHANCED_WAREHOUSE_AVAILABLE = True
-except ImportError:
-    ENHANCED_WAREHOUSE_AVAILABLE = False
-    print("⚠️ Модули улучшенного анализа складов не найдены")
+# Модули улучшенного анализа складов отключены для использования чистой версии
+ENHANCED_WAREHOUSE_AVAILABLE = False
 
 
 
@@ -150,16 +142,6 @@ def init_system():
         apply_complete_fix_to_system(st.session_state.inventory_system)
         add_warehouse_analysis_to_system(st.session_state.inventory_system)
         
-        # 🚀 АВТОМАТИЧЕСКОЕ ПРИМЕНЕНИЕ УЛУЧШЕНИЙ АНАЛИЗА СКЛАДОВ
-        if ENHANCED_WAREHOUSE_AVAILABLE:
-            try:
-                # Базовое решение складов
-                apply_complete_warehouse_solution(st.session_state.inventory_system)
-                # Улучшенный интерфейс
-                apply_enhanced_warehouse_interface(st.session_state.inventory_system)
-                print("✅ Улучшенный анализ складов автоматически применен")
-            except Exception as e:
-                print(f"⚠️ Ошибка применения улучшений складов: {e}")
         
     return st.session_state.inventory_system
 
@@ -2626,7 +2608,6 @@ def main():
                 "🔤📊 ABC подкатегории",
                 "📋 MIN запасы",
                 "🏪 Анализ складов",
-                "🚀 Улучшенный анализ складов",
                 "⚖️ Сравнение остатков",
                 "📦 MAX остатки",
                 "🚚 Рекомендации по перемещениям", 
@@ -2686,14 +2667,6 @@ def main():
         min_stock_calculation_page(system)
     elif page == "🏪 Анализ складов":
         warehouse_analysis_page(system)
-    elif page == "🚀 Улучшенный анализ складов":
-        # Новая улучшенная страница анализа складов
-        if ENHANCED_WAREHOUSE_AVAILABLE:
-            from warehouse_system_integration import create_warehouse_integration_page
-            create_warehouse_integration_page(system)
-        else:
-            st.error("❌ Модули улучшенного анализа складов не найдены")
-            st.info("💡 Используйте обычный 'Анализ складов'")
     elif page == "⚖️ Сравнение остатков":
         if PRICE_FEATURES_AVAILABLE:
             stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ

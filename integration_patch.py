@@ -161,15 +161,35 @@ def render_multiple_files_interface_fixed(system):
     return False
 
 def extract_branch_name_simple(filename: str) -> str:
-    """Определение филиала по имени файла"""
+    """Определение филиала по имени файла с учетом разных типов складов"""
     name = filename.lower().replace('.xlsx', '').replace('.xls', '')
     
+    # ИСПРАВЛЕНО: Детальная обработка всех филиалов
+    if 'шымкент' in name:
+        if 'маг' in name or 'магазин' in name:
+            return 'шымкент_магазин'
+        elif 'скл' in name or 'склад' in name:
+            return 'шымкент_склад'
+        else:
+            return 'шымкент_склад'  # По умолчанию склад
+    elif 'астана' in name:
+        if 'скл' in name or 'склад' in name:
+            return 'астана_склад'
+        else:
+            return 'астана'  # Магазин Астана
+    elif 'барыс' in name:
+        return 'барыс'
+    elif 'казыб' in name:
+        if 'скл' in name or 'склад' in name:
+            return 'казыбаева'  # Склад Казыбаева
+        elif 'тд' in name:
+            return 'казыбаева'  # ТД тоже мапится на казыбаева (оба склада объединены)
+        else:
+            return 'казыбаева'
+    
+    # Обычный маппинг для остальных
     branch_mapping = {
-        'шымкент': 'шымкент',
-        'астана': 'астана', 
         'алматы': 'алматы',
-        'барыс': 'барыс',
-        'казыб': 'казыбаева',
         'актобе': 'актобе',
         'караганда': 'караганда'
     }
@@ -211,10 +231,14 @@ def process_files_safe(system, uploaded_files):
             
             if result['success']:
                 successful_count += 1
+                # Обновленная статистика с автозаполнением
+                autofill_info = f", автозаполнено: {result.get('autofill_applied', 0)}" if result.get('autofill_applied', 0) > 0 else ""
+                ads_stats = f"ADS>0: {result.get('items_with_positive_ads', 0)}, ADS=0: {result.get('items_with_zero_ads', 0)}"
+                
                 system.multiple_files_data['processing_log'].append(
-                    f"✅ {file.name}: {result['total_items']} товаров, ADS: {result['total_ads']:.2f}"
+                    f"✅ {file.name}: {result['total_items']} товаров, {ads_stats}{autofill_info}"
                 )
-                st.success(f"✅ {file.name}: {result['total_items']} товаров")
+                st.success(f"✅ {file.name}: {result['total_items']} товаров ({ads_stats})")
             else:
                 system.multiple_files_data['processing_log'].append(
                     f"❌ {file.name}: {result['error']}"
@@ -309,6 +333,13 @@ def process_single_file_safe(file_content: bytes, filename: str, branch_name: st
         
         result_df = pd.DataFrame(sales_data)
         
+        # 🔧 НОВОЕ: Автозаполнение товаров с ADS=0 по подкатегориям
+        filled_count = apply_subcategory_autofill_to_df(result_df, branch_name)
+        
+        # Подсчитываем статистику после автозаполнения
+        final_zero_count = (result_df['ads'] == 0).sum()
+        final_positive_count = (result_df['ads'] > 0).sum()
+        
         return {
             'success': True,
             'total_items': len(result_df),
@@ -316,6 +347,9 @@ def process_single_file_safe(file_content: bytes, filename: str, branch_name: st
             'average_ads': result_df['ads'].mean(),
             'prices_found': prices_found,
             'price_coverage': (prices_found / len(result_df) * 100) if len(result_df) > 0 else 0,
+            'autofill_applied': filled_count,
+            'items_with_positive_ads': final_positive_count,
+            'items_with_zero_ads': final_zero_count,
             'data': result_df,
             'source_data': df,  # Сохраняем исходные данные!
             'branch_name': branch_name
@@ -628,6 +662,104 @@ def test_final_patch():
             
     except Exception as e:
         st.error(f"❌ Ошибка тестирования: {str(e)}")
+
+def apply_subcategory_autofill_to_df(df, branch_name):
+    """
+    Применяет автозаполнение ADS=0 товаров средними значениями по подкатегориям
+    """
+    if df is None or df.empty:
+        return 0
+    
+    if 'номенклатура' not in df.columns or 'ads' not in df.columns:
+        return 0
+    
+    filled_count = 0
+    original_zero_count = (df['ads'] == 0).sum()
+    
+    try:
+        # Собираем ADS по подкатегориям (только товары с ADS > 0)
+        subcategory_ads = {}
+        for _, row in df.iterrows():
+            try:
+                item_name = str(row['номенклатура'])
+                ads_value = float(row['ads']) if pd.notna(row['ads']) else 0.0
+                
+                if ads_value > 0:
+                    # Извлекаем подкатегорию из названия (первые 2 слова)
+                    words = item_name.split()
+                    subcategory = ' '.join(words[:2]) if len(words) >= 2 else words[0] if words else 'Общая'
+                    
+                    if subcategory not in subcategory_ads:
+                        subcategory_ads[subcategory] = []
+                    subcategory_ads[subcategory].append(ads_value)
+            except (ValueError, TypeError):
+                continue
+        
+        # Рассчитываем средние по подкатегориям
+        subcategory_averages = {}
+        for subcategory, ads_values in subcategory_ads.items():
+            if ads_values:
+                subcategory_averages[subcategory] = sum(ads_values) / len(ads_values)
+        
+        print(f"📊 {branch_name}: найдено {len(subcategory_averages)} подкатегорий с ADS>0")
+        
+        # Заполняем товары с ADS=0
+        for idx, row in df.iterrows():
+            try:
+                ads_value = float(row['ads']) if pd.notna(row['ads']) else 0.0
+                
+                if ads_value == 0:
+                    item_name = str(row['номенклатура'])
+                    words = item_name.split()
+                    
+                    # Пробуем несколько вариантов поиска подкатегории
+                    found_replacement = False
+                    
+                    # 1. Точная подкатегория (2 слова)
+                    subcategory = ' '.join(words[:2]) if len(words) >= 2 else words[0] if words else 'Общая'
+                    if subcategory in subcategory_averages:
+                        df.at[idx, 'ads'] = subcategory_averages[subcategory]
+                        filled_count += 1
+                        found_replacement = True
+                    
+                    # 2. Первое слово (более широкая категория)
+                    elif not found_replacement and words:
+                        first_word = words[0]
+                        if first_word in subcategory_averages:
+                            df.at[idx, 'ads'] = subcategory_averages[first_word]
+                            filled_count += 1
+                            found_replacement = True
+                    
+                    # 3. Минимальный ADS для файлов с очень низкими продажами
+                    if not found_replacement and subcategory_averages:
+                        overall_avg = sum(subcategory_averages.values()) / len(subcategory_averages)
+                        if overall_avg > 0:
+                            # Для файлов со слабыми продажами даем больший минимум
+                            min_ads = max(0.01, overall_avg * 0.1)  # 10% от среднего вместо 5%
+                            df.at[idx, 'ads'] = min_ads
+                            filled_count += 1
+                    
+                    # 4. ЭКСТРЕННЫЙ случай: если совсем нет подкатегорий с ADS>0
+                    elif not found_replacement and not subcategory_averages:
+                        # Даем минимальный ADS всем товарам без продаж
+                        df.at[idx, 'ads'] = 0.01  # Минимальный ADS
+                        filled_count += 1
+                        
+            except (ValueError, TypeError, KeyError):
+                continue
+        
+        final_zero_count = (df['ads'] == 0).sum()
+        
+        if filled_count > 0:
+            print(f"✅ {branch_name}: автозаполнено {filled_count} товаров (было ADS=0: {original_zero_count}, стало: {final_zero_count})")
+        elif original_zero_count > 0:
+            print(f"⚠️ {branch_name}: не удалось заполнить {original_zero_count} товаров с ADS=0")
+        
+        return filled_count
+        
+    except Exception as e:
+        print(f"❌ Ошибка автозаполнения для {branch_name}: {str(e)}")
+        return 0
 
 if __name__ == "__main__":
     test_final_patch()

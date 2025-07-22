@@ -1,0 +1,39 @@
+{
+  "email": {
+    "enabled": false,
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "username": "your_email@gmail.com",
+    "password": "your_app_password",
+    "recipients": [
+      "manager@company.com",
+      "analyst@company.com"
+    ]
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "YOUR_BOT_TOKEN",
+    "chat_ids": [
+      "-123456789",
+      "987654321"
+    ]
+  },
+  "schedule": {
+    "time": "09:00",
+    "enabled": true
+  },
+  "analysis_settings": {
+    "hub": {
+      "min": 60,
+      "max": 180
+    },
+    "warehouse": {
+      "min": 30,
+      "max": 90
+    },
+    "store": {
+      "min": 14,
+      "max": 45
+    }
+  }
+}

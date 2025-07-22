@@ -1,0 +1,15 @@
+2025-07-22 08:37:50,775 - INFO - Webhook сервер настроен. Директория загрузок: webhook_uploads
+2025-07-22 08:37:50,776 - INFO - Секретный ключ загружен: Да
+2025-07-22 08:37:50,777 - INFO - Запуск webhook сервера на порту 5000
+2025-07-22 08:37:50,778 - INFO - Директория загрузок: webhook_uploads
+2025-07-22 08:37:50,794 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.27.204.208:5000
+2025-07-22 08:37:50,794 - INFO - [33mPress CTRL+C to quit[0m
+2025-07-22 08:40:42,300 - INFO - 127.0.0.1 - - [22/Jul/2025 08:40:42] "GET /webhook/status HTTP/1.1" 200 -
+2025-07-22 08:42:18,656 - INFO - 127.0.0.1 - - [22/Jul/2025 08:42:18] "GET /webhook/status HTTP/1.1" 200 -
+2025-07-22 08:42:35,286 - INFO - Получен файл продаж: sales_2025-01-01_2025-01-15.json
+2025-07-22 08:42:35,287 - INFO - 127.0.0.1 - - [22/Jul/2025 08:42:35] "POST /webhook/sales HTTP/1.1" 200 -
+2025-07-22 08:42:49,013 - INFO - Получен файл остатков: stock_2025-01-15.json
+2025-07-22 08:42:49,014 - INFO - 127.0.0.1 - - [22/Jul/2025 08:42:49] "POST /webhook/stock HTTP/1.1" 200 -

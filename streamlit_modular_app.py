@@ -2697,19 +2697,11 @@ def main():
     with st.sidebar:
         st.header("🧭 Навигация")
         
-        # Показываем статус системы
-        st.subheader("📊 Статус системы")
-        show_system_status(system)
-
-        
-        st.markdown("---")
-        
         # ВАЖНО: Определяем переменную page ЗДЕСЬ, в sidebar
         pages_list = [
             "🔤 ABC анализ",
             "📊 ADS расчет",
             "🔤📊 ABC подкатегории",
-            "🔄 Межфилиальные перемещения",
             "⚙️ Настройки"
         ]
         
@@ -2745,8 +2737,6 @@ def main():
         ads_calculation_page_updated(system)
     elif page == "🔤📊 ABC подкатегории":  
         subcategory_abc_analysis_page(system)
-    elif page == "🔄 Межфилиальные перемещения":
-        show_movement_recommendations_page(system)
     elif page == "⚙️ Настройки":
         settings_page(system)
     

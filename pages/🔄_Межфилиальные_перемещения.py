@@ -6,6 +6,18 @@ from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 import time
+import sys
+import os
+
+# Добавляем путь к родительской директории для импорта модулей
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from modular_inventory_system import ModularInventorySystem
+    ADS_AVAILABLE = True
+except ImportError:
+    ADS_AVAILABLE = False
+    st.warning("⚠️ Модуль ADS расчетов не найден")
 
 st.set_page_config(
     page_title="Межфилиальные перемещения",
@@ -209,33 +221,80 @@ def parse_sales_data(sales_json):
     
     return pd.DataFrame(all_sales), period_days
 
-def calculate_turnover_days(stock_df, sales_df, period_days=30):
-    """Расчет оборачиваемости в днях - оптимизированная версия"""
-    print("Начинаем расчет оборачиваемости...")
+def calculate_simple_ads_from_sales(sales_df, period_days=30):
+    """Простой расчет ADS из файла продаж"""
+    print(f"Расчет ADS из {len(sales_df)} продаж за {period_days} дней")
     
-    # Оптимизируем - группируем продажи заранее
-    sales_grouped = sales_df.groupby(['branch', 'article'])['quantity'].sum().reset_index()
-    sales_grouped.rename(columns={'quantity': 'sales_qty'}, inplace=True)
+    if sales_df.empty:
+        return pd.DataFrame()
     
-    # Объединяем данные
-    merged = pd.merge(
-        stock_df,
-        sales_grouped,
-        on=['branch', 'article'],
-        how='left'
-    )
+    # Группируем по филиалам и товарам
+    ads_data = []
     
-    merged['sales_qty'] = merged['sales_qty'].fillna(0)
+    for branch in sales_df['branch'].unique():
+        branch_sales = sales_df[sales_df['branch'] == branch]
+        
+        for _, sale in branch_sales.iterrows():
+            # ADS = среднедневное количество продаж
+            daily_quantity = sale['quantity'] / period_days
+            
+            ads_data.append({
+                'Филиал': branch,
+                'Товар': sale['product'],
+                'Артикул': sale['article'], 
+                'Продано за период': sale['quantity'],
+                'Себестоимость за период': sale['cost'],
+                'ADS (шт/день)': round(daily_quantity, 2),
+                'Категория': sale.get('category_path', '').split('/')[0] if sale.get('category_path') else 'Без категории'
+            })
     
-    # Рассчитываем среднедневные продажи и оборачиваемость векторно
-    merged['daily_sales'] = merged['sales_qty'] / period_days
+    ads_df = pd.DataFrame(ads_data)
+    
+    if not ads_df.empty:
+        # Сортируем по ADS по убыванию
+        ads_df = ads_df.sort_values('ADS (шт/день)', ascending=False)
+        total_ads = ads_df['ADS (шт/день)'].sum()
+        print(f"✅ Общий ADS системы: {total_ads:.2f} шт/день")
+    
+    return ads_df
+
+def calculate_turnover_and_ads(stock_df, sales_df, period_days=30):
+    """Старая функция для совместимости с рекомендациями"""
+    print(f"Расчет оборачиваемости для {len(stock_df)} остатков и {len(sales_df)} продаж за {period_days} дней")
+    
+    # Группируем продажи по филиалу и артикулу
+    sales_grouped = sales_df.groupby(['branch', 'article']).agg({
+        'quantity': 'sum',
+        'cost': 'sum'  
+    }).reset_index()
+    
+    # Объединяем с остатками
+    merged = pd.merge(stock_df, sales_grouped, on=['branch', 'article'], how='left')
+    
+    # Заполняем пропуски
+    merged['quantity_y'] = merged['quantity_y'].fillna(0)  # продажи
+    merged['cost_y'] = merged['cost_y'].fillna(0)  # себестоимость продаж
+    
+    # Переименовываем для ясности
+    merged.rename(columns={
+        'quantity_x': 'quantity',  # остатки
+        'cost_x': 'cost',          # стоимость остатков  
+        'quantity_y': 'sales_qty', # количество продаж
+        'cost_y': 'sales_cost'     # себестоимость продаж
+    }, inplace=True)
+    
+    # Рассчитываем ADS
+    merged['daily_sales_qty'] = merged['sales_qty'] / period_days
+    merged['daily_sales_cost'] = merged['sales_cost'] / period_days  
+    merged['ads'] = merged['daily_sales_cost']  # ADS = среднедневная себестоимость
+    
+    # Оборачиваемость
     merged['turnover_days'] = np.where(
-        merged['daily_sales'] > 0,
-        merged['quantity'] / merged['daily_sales'],
+        merged['daily_sales_qty'] > 0,
+        merged['quantity'] / merged['daily_sales_qty'],
         999
     )
     
-    print(f"Оборачиваемость рассчитана для {len(merged)} записей")
     return merged
 
 def generate_movement_recommendations(stock_df, sales_df, period_days=30, 
@@ -244,14 +303,15 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
                                     store_min_days=14, store_max_days=45):
     """Генерация рекомендаций по перемещениям с учетом иерархии"""
     
-    print(f"Начинаем расчет оборачиваемости для {len(stock_df)} остатков и {len(sales_df)} продаж")
+    print(f"Начинаем расчет оборачиваемости и ADS для {len(stock_df)} остатков и {len(sales_df)} продаж")
     
-    # Рассчитываем оборачиваемость
-    turnover_df = calculate_turnover_days(stock_df, sales_df, period_days)
+    # Рассчитываем оборачиваемость и ADS одновременно
+    turnover_df = calculate_turnover_and_ads(stock_df, sales_df, period_days)
     
     # Предварительная фильтрация - оставляем только товары с остатками или продажами
     turnover_df = turnover_df[(turnover_df['quantity'] > 0) | (turnover_df['sales_qty'] > 0)]
     print(f"После фильтрации осталось {len(turnover_df)} записей")
+    print(f"Всего ADS по системе: {turnover_df['ads'].sum():.2f} тенге/день")
     
     recommendations = []
     unique_articles = turnover_df['article'].unique()
@@ -291,21 +351,21 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
             # Критерии для разных типов филиалов
             if branch_type == "хаб":
                 # 🏢 Главный хаб
-                if row['turnover_days'] < hub_min_days and row['daily_sales'] > 0:
+                if row['turnover_days'] < hub_min_days and row['daily_sales_qty'] > 0:
                     deficit_branches.append(row_dict)
                 elif row['turnover_days'] > hub_max_days:
                     excess_branches.append(row_dict)
             
             elif branch_type == "склад":
                 # 📦 Склады 2-го уровня
-                if row['turnover_days'] < warehouse_min_days and row['daily_sales'] > 0:
+                if row['turnover_days'] < warehouse_min_days and row['daily_sales_qty'] > 0:
                     deficit_branches.append(row_dict)
                 elif row['turnover_days'] > warehouse_max_days:
                     excess_branches.append(row_dict)
             
             elif branch_type in ["магазин_от_хаба", "магазин_3_уровня"]:
                 # 🏪 Магазины (напрямую от хаба или 3-го уровня)
-                if row['turnover_days'] < store_min_days and row['daily_sales'] > 0:
+                if row['turnover_days'] < store_min_days and row['daily_sales_qty'] > 0:
                     deficit_branches.append(row_dict)
                 elif row['turnover_days'] > store_max_days:
                     excess_branches.append(row_dict)
@@ -336,7 +396,7 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
                         if parent == excess['branch']:
                             # Рассчитываем потребность
                             target_days = 30 if deficit_type == "склад" else 21
-                            needed_qty = max(5, int(deficit['daily_sales'] * target_days - deficit['quantity']))
+                            needed_qty = max(5, int(deficit['daily_sales_qty'] * target_days - deficit['quantity']))
                             transfer_qty = min(needed_qty, int(available_qty * 0.4))  # До 40% от избытка
                             
                             if transfer_qty >= 5:
@@ -353,7 +413,7 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
                                     'reason': reason,
                                     'current_turnover_from': excess['turnover_days'],
                                     'current_turnover_to': deficit['turnover_days'],
-                                    'improvement_days': (transfer_qty / deficit['daily_sales']) if deficit['daily_sales'] > 0 else 0,
+                                    'improvement_days': (transfer_qty / deficit['daily_sales_qty']) if deficit['daily_sales_qty'] > 0 else 0,
                                     'priority': 'high'
                                 })
                                 available_qty -= transfer_qty
@@ -370,7 +430,7 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
                             deficit['turnover_days'] < 15 and  # Острая нехватка
                             excess['turnover_days'] > 90):     # Значительный избыток
                             
-                            needed_qty = max(5, int(deficit['daily_sales'] * 21))
+                            needed_qty = max(5, int(deficit['daily_sales_qty'] * 21))
                             transfer_qty = min(needed_qty, int(available_qty * 0.3))
                             
                             if transfer_qty >= 5:
@@ -387,7 +447,7 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
                                     'reason': reason,
                                     'current_turnover_from': excess['turnover_days'],
                                     'current_turnover_to': deficit['turnover_days'],
-                                    'improvement_days': (transfer_qty / deficit['daily_sales']) if deficit['daily_sales'] > 0 else 0,
+                                    'improvement_days': (transfer_qty / deficit['daily_sales_qty']) if deficit['daily_sales_qty'] > 0 else 0,
                                     'priority': 'medium'
                                 })
                                 available_qty -= transfer_qty
@@ -426,7 +486,7 @@ def generate_movement_recommendations(stock_df, sales_df, period_days=30,
             continue
     
     print(f"Анализ завершен. Создано {len(recommendations)} рекомендаций.")
-    return recommendations
+    return recommendations, turnover_df
 
 def main():
     st.title("🔄 Межфилиальные перемещения")
@@ -478,6 +538,7 @@ def main():
         with col2:
             store_max_days = st.number_input("Максимум дней запаса", value=45, min_value=30, max_value=90, key="store_max")
     
+
     if stock_file and sales_file:
         # Загружаем данные
         stock_json = load_json_file(stock_file)
@@ -537,12 +598,16 @@ def main():
             with col5:
                 st.metric("📅 Период", f"{detected_period_days} дней")
             
+            # Инициализируем переменные для использования во всех табах
+            recommendations = []
+            turnover_df = pd.DataFrame()
+            
             # Генерируем рекомендации
             with st.spinner("Анализ оптимальных перемещений..."):
                 try:
                     st.write(f"Начинаем анализ для {stock_df.shape[0]} остатков и {sales_df.shape[0]} продаж...")
                     
-                    recommendations = generate_movement_recommendations(
+                    recommendations, turnover_df = generate_movement_recommendations(
                         stock_df, sales_df, detected_period_days,
                         hub_min_days, hub_max_days,
                         warehouse_min_days, warehouse_max_days,
@@ -553,6 +618,12 @@ def main():
                     
                 except Exception as e:
                     st.error(f"Ошибка при анализе: {str(e)}")
+                    # Даже при ошибке пытаемся рассчитать базовые ADS данные
+                    try:
+                        turnover_df = calculate_turnover_and_ads(stock_df, sales_df, detected_period_days)
+                        st.info("Базовые ADS данные рассчитаны, несмотря на ошибку в рекомендациях")
+                    except:
+                        pass
                     return
             
             st.write(f"🔍 Отладка: получено {len(recommendations) if recommendations else 0} рекомендаций")
@@ -561,13 +632,14 @@ def main():
                 st.success(f"✅ Найдено {len(recommendations)} рекомендаций по перемещению")
                 
                 # Вкладки для разных представлений
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                     "📊 Сводка рекомендаций",
                     "📋 Детальный список", 
                     "🗺️ Визуализация",
                     "📈 Анализ по филиалам",
                     "🔄 ABC анализ по категориям",
-                    "🏢 Оборачиваемость складов"
+                    "🏢 Оборачиваемость складов",
+                    "💰 ADS анализ"
                 ])
                 
                 with tab1:
@@ -1362,6 +1434,64 @@ def main():
                     
                     else:
                         st.info("Недостаточно данных для анализа оборачиваемости складов")
+                
+                with tab7:
+                    # Простой ADS анализ напрямую из файла продаж
+                    st.subheader("💰 ADS (Average Daily Sales) Анализ")
+                    
+                    if not sales_df.empty:
+                        # Рассчитываем простые ADS из файла продаж
+                        with st.spinner("Расчет ADS из файла продаж..."):
+                            ads_df = calculate_simple_ads_from_sales(sales_df, detected_period_days)
+                        
+                        if not ads_df.empty:
+                            # Общая статистика
+                            total_ads = ads_df['ADS (шт/день)'].sum()
+                            total_items = len(ads_df)
+                            branches_count = ads_df['Филиал'].nunique()
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Общий ADS системы", f"{total_ads:.2f} шт/день")
+                            with col2:
+                                st.metric("Товаров с продажами", f"{total_items}")
+                            with col3:
+                                st.metric("Филиалов", f"{branches_count}")
+                            
+                            # Выбор филиала
+                            st.markdown("### 📊 ADS по филиалам")
+                            
+                            # Список филиалов для выбора
+                            branch_options = ['Все филиалы'] + sorted(ads_df['Филиал'].unique())
+                            selected_branch = st.selectbox(
+                                "Выберите филиал для анализа:",
+                                branch_options,
+                                key="ads_branch_selector"
+                            )
+                            
+                            # Фильтрация данных по выбранному филиалу
+                            if selected_branch == 'Все филиалы':
+                                display_data = ads_df.copy()
+                                st.info(f"📍 Показаны данные по всем филиалам ({len(display_data)} товаров)")
+                            else:
+                                display_data = ads_df[ads_df['Филиал'] == selected_branch].copy()
+                                branch_total = display_data['ADS (шт/день)'].sum()
+                                st.info(f"📍 Филиал: **{selected_branch}** | Общий ADS: **{branch_total:.2f} шт/день** | Товаров: **{len(display_data)}**")
+                            
+                            # Отображение всех товаров в виде таблицы
+                            if not display_data.empty:
+                                st.dataframe(
+                                    display_data[['Филиал', 'Товар', 'Артикул', 'ADS (шт/день)', 'Продано за период', 'Себестоимость за период', 'Категория']], 
+                                    use_container_width=True, 
+                                    hide_index=True,
+                                    height=600
+                                )
+                            else:
+                                st.warning("Нет данных для выбранного филиала")
+                        else:
+                            st.warning("⚠️ Не удалось рассчитать ADS из данных продаж")
+                    else:
+                        st.warning("⚠️ Нет данных о продажах для расчета ADS")
             
             else:
                 st.warning("⚠️ Нет рекомендаций по перемещению при текущих параметрах")

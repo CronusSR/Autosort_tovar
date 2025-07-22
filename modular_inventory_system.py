@@ -94,6 +94,73 @@ class ModularInventorySystem:
         """Инициализация анализатора подкатегорий"""
         if not hasattr(self, 'subcategory_analyzer'):
             self.subcategory_analyzer = SubcategoryABCAnalyzer()
+    
+    def load_ads_from_single_file(self):
+        """Загрузка ADS данных из обработанных файлов единого файла продаж"""
+        import json
+        import os
+        
+        all_ads_data = {}
+        
+        # Читаем данные каждого филиала
+        if os.path.exists('ads/combined_ads_data.json'):
+            with open('ads/combined_ads_data.json', 'r', encoding='utf-8') as f:
+                combined_info = json.load(f)
+            
+            for branch_key, branch_info in combined_info['branches'].items():
+                branch_file = f"ads/{branch_info['ads_file']}"
+                
+                if os.path.exists(branch_file):
+                    with open(branch_file, 'r', encoding='utf-8') as f:
+                        branch_data = json.load(f)
+                    
+                    # Преобразуем данные филиала в формат системы
+                    branch_ads = []
+                    for item_name, item_data in branch_data['ads_data'].items():
+                        branch_ads.append({
+                            'номенклатура': item_data['название'],
+                            'ads': item_data['среднедневные_продажи'],
+                            'общие_продажи': item_data['общие_продажи'],
+                            'период_дней': item_data['период_дней'],
+                            'филиал': branch_key
+                        })
+                    
+                    # Сохраняем данные филиала
+                    all_ads_data[branch_key] = {
+                        'ads_data': pd.DataFrame(branch_ads),
+                        'total_items': len(branch_ads),
+                        'branch_name': branch_info['name']
+                    }
+        
+        # Объединяем все данные в общий ADS
+        if all_ads_data:
+            # Создаем объединенный датафрейм
+            combined_ads = []
+            for branch_key, branch_data in all_ads_data.items():
+                branch_df = branch_data['ads_data'].copy()
+                branch_df['филиал'] = branch_key
+                combined_ads.append(branch_df)
+            
+            if combined_ads:
+                self.calculated_ads = pd.concat(combined_ads, ignore_index=True)
+                
+                # Группируем по товарам, суммируя ADS по всем филиалам
+                grouped_ads = self.calculated_ads.groupby('номенклатура').agg({
+                    'ads': 'sum',
+                    'общие_продажи': 'sum',
+                    'период_дней': 'first'
+                }).reset_index()
+                
+                # Сохраняем как основные ADS данные
+                self.sales_data = grouped_ads
+                
+                # Сохраняем данные по филиалам отдельно
+                self.multiple_files_data = all_ads_data
+                self.is_multiple_files_mode = True
+                
+                return all_ads_data
+        
+        return None
     def __init__(self):
         # Данные по этапам
         self.abc_data = None
@@ -1376,7 +1443,7 @@ class ModularInventorySystem:
     
     def load_current_stock_file(self, file_content) -> Dict:
         """
-        Загрузка файла текущих остатков
+        Загрузка файла текущих остатков (ИСПРАВЛЕННАЯ ВЕРСИЯ для файла 08.07.2025)
         
         Args:
             file_content: Содержимое файла остатков
@@ -1385,84 +1452,123 @@ class ModularInventorySystem:
             Dict с информацией о загруженных остатках
         """
         try:
-            # Читаем Excel файл
+            # Читаем Excel файл БЕЗ заголовков - КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ!
             if hasattr(file_content, 'read'):
-                df = pd.read_excel(file_content, engine='openpyxl')
+                df = pd.read_excel(file_content, engine='openpyxl', header=None)
             else:
-                df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+                df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl', header=None)
             
-            # Ищем заголовки
+            print(f"📊 Загружен файл: {df.shape[0]} строк x {df.shape[1]} колонок")
+            
+            # ИСПРАВЛЕНИЕ: Ищем строку с "Номенклатура" (обычно строка 7)
             header_row = None
-            for i, row in df.iterrows():
-                row_str = str(row.iloc[0]).lower()
-                if pd.notna(row.iloc[0]) and any(word in row_str for word in ['номенклатура', 'наименование', 'товар']):
-                    header_row = i
-                    break
+            for i in range(min(15, len(df))):
+                if pd.notna(df.iloc[i, 0]):
+                    cell_value = str(df.iloc[i, 0]).strip().lower()
+                    if 'номенклатура' in cell_value:
+                        header_row = i
+                        print(f"✅ Найдена строка заголовков: {i + 1}")
+                        break
             
-            if header_row is not None:
-                headers = df.iloc[header_row].tolist()
-                df = df.iloc[header_row + 1:].copy()
-                df.columns = headers
+            # Если не нашли, используем строку 7 (индекс 6)
+            if header_row is None:
+                header_row = 6  # Строка 7 в Excel = индекс 6 в pandas
+                print(f"⚠️ Используем строку заголовков по умолчанию: {header_row + 1}")
             
-            # Стандартизируем названия колонок
-            df.columns = [str(col).lower().strip() if pd.notna(col) else f'col_{i}' for i, col in enumerate(df.columns)]
+            # ИСПРАВЛЕНИЕ: Правильно извлекаем заголовки
+            headers = []
+            for col_idx in range(df.shape[1]):
+                if pd.notna(df.iloc[header_row, col_idx]):
+                    header_val = str(df.iloc[header_row, col_idx]).strip()
+                    headers.append(header_val)
+                else:
+                    headers.append(f'col_{col_idx}')
             
-            # Ищем колонку номенклатуры
-            nomenclature_col = None
-            for col in df.columns:
-                if any(word in str(col).lower() for word in ['номенклатура', 'наименование', 'товар']):
-                    nomenclature_col = col
-                    break
+            print(f"📋 Найдено заголовков: {len([h for h in headers if not h.startswith('col_')])}")
             
-            if nomenclature_col is None:
-                nomenclature_col = df.columns[0]
+            # ИСПРАВЛЕНИЕ: Данные начинаются ПОСЛЕ строки заголовков
+            data_start_row = header_row + 1
+            df_data = df.iloc[data_start_row:].copy()
             
-            df = df.rename(columns={nomenclature_col: 'номенклатура'})
+            # Устанавливаем заголовки
+            df_data.columns = headers[:len(df_data.columns)]
             
-            # Ищем колонки с остатками
-            stock_columns = []
-            for col in df.columns:
-                col_str = str(col).lower()
-                if any(word in col_str for word in ['остаток', 'stock', 'balance', 'склад', 'количество']):
-                    stock_columns.append(col)
-                # Также проверяем числовые колонки (кроме номенклатуры)
-                elif col != 'номенклатура':
-                    try:
-                        # Проверяем, содержит ли колонка числовые данные
-                        numeric_data = pd.to_numeric(df[col], errors='coerce')
-                        if not numeric_data.isna().all():
-                            stock_columns.append(col)
-                    except:
-                        continue
+            print(f"📊 Строк данных: {len(df_data)} (начиная со строки {data_start_row + 1})")
+            
+            # ИСПРАВЛЕНИЕ: Номенклатура всегда в первой колонке
+            nomenclature_col = headers[0]
+            df_data = df_data.rename(columns={nomenclature_col: 'номенклатура'})
+            print(f"📝 Колонка номенклатуры: '{nomenclature_col}'")
+            
+            # ИСПРАВЛЕНИЕ: Ищем склады в колонках D-L (индексы 3-11), исключая "Итого"
+            warehouse_columns = []
+            warehouse_mapping = {}
+            
+            for col_idx in range(3, min(13, len(headers))):  # Колонки D-L
+                if col_idx < len(headers):
+                    col_name = headers[col_idx]
+                    if pd.notna(col_name) and str(col_name).strip():
+                        col_str = str(col_name).lower()
+                        # ИСПРАВЛЕНИЕ: Исключаем "Итого"
+                        if 'итого' not in col_str and 'total' not in col_str and len(col_str) > 3:
+                            warehouse_columns.append(col_name)
+                            # Создаем короткое имя для отображения
+                            short_name = (str(col_name)
+                                        .replace('Склад фурнитуры', 'Склад')
+                                        .replace('Фурнитура', 'Фурн')
+                                        .replace('TRADE', 'TR')[:25])
+                            warehouse_mapping[col_name] = short_name
+                            print(f"🏪 Склад: '{short_name}'")
+            
+            print(f"📊 Найдено складов: {len(warehouse_columns)}")
             
             # Очищаем данные
-            df = df.dropna(subset=['номенклатура'])
-            df = df[df['номенклатура'].astype(str).str.strip() != '']
-            df = df[df['номенклатура'].astype(str) != 'nan']
+            initial_count = len(df_data)
+            df_data = df_data.dropna(subset=['номенклатура'])
+            df_data = df_data[df_data['номенклатура'].astype(str).str.strip() != '']
+            df_data = df_data[df_data['номенклатура'].astype(str) != 'nan']
+            print(f"📊 Очищено: {initial_count} -> {len(df_data)} строк")
             
-            # Преобразуем остатки в числовой формат
-            for col in stock_columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            # ИСПРАВЛЕНИЕ: Преобразуем остатки в числовой формат
+            for col in warehouse_columns:
+                if col in df_data.columns:
+                    df_data[col] = pd.to_numeric(df_data[col], errors='coerce').fillna(0)
             
             # Рассчитываем общий остаток
-            if stock_columns:
-                df['total_current_stock'] = df[stock_columns].sum(axis=1)
+            existing_warehouse_cols = [col for col in warehouse_columns if col in df_data.columns]
+            if existing_warehouse_cols:
+                df_data['total_current_stock'] = df_data[existing_warehouse_cols].sum(axis=1)
             else:
-                df['total_current_stock'] = 0
+                df_data['total_current_stock'] = 0
             
-            self.stock_data = df
+            # Сохраняем данные
+            self.stock_data = df_data
+            self.warehouse_mapping = warehouse_mapping
+            
+            items_with_stock = len(df_data[df_data['total_current_stock'] > 0])
+            total_stock = df_data['total_current_stock'].sum()
+            
+            print(f"✅ УСПЕШНО ЗАГРУЖЕНО:")
+            print(f"  📊 Всего товаров: {len(df_data)}")
+            print(f"  📊 С остатками: {items_with_stock}")
+            print(f"  📊 Общий остаток: {total_stock:,.0f}")
+            print(f"  📊 Складов: {len(existing_warehouse_cols)}")
             
             return {
                 'success': True,
-                'total_items': len(df),
-                'stock_columns_found': len(stock_columns),
-                'total_stock': df['total_current_stock'].sum(),
-                'items_with_stock': len(df[df['total_current_stock'] > 0]),
-                'avg_stock': df['total_current_stock'].mean(),
-                'top_stock': df.nlargest(5, 'total_current_stock')[['номенклатура', 'total_current_stock']].to_dict('records')
+                'total_items': len(df_data),
+                'warehouses_found': len(existing_warehouse_cols),
+                'warehouse_list': list(warehouse_mapping.values()),
+                'total_stock': total_stock,
+                'items_with_stock': items_with_stock,
+                'avg_stock': df_data['total_current_stock'].mean(),
+                'top_stock': df_data.nlargest(5, 'total_current_stock')[['номенклатура', 'total_current_stock']].to_dict('records')
             }
             
         except Exception as e:
+            print(f"❌ Ошибка загрузки файла остатков: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'error': f"Ошибка загрузки файла остатков: {str(e)}"}
     
     def compare_stock_vs_min(self) -> Dict:

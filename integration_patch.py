@@ -12,7 +12,7 @@ import io
 from datetime import datetime
 
 def patch_existing_system():
-    """Безопасная инициализация системы"""
+    """Безопасная инициализация системы с поддержкой единого файла"""
     if 'inventory_system' not in st.session_state:
         try:
             from modular_inventory_system import ModularInventorySystem
@@ -47,7 +47,7 @@ def patch_existing_system():
 
 def add_multiple_files_interface_to_existing():
     """
-    ИСПРАВЛЕННАЯ функция - БЕЗ ВЛОЖЕННЫХ EXPANDER'ОВ
+    ИСПРАВЛЕННАЯ функция для множественных файлов - совместимость с единым файлом
     """
     system = patch_existing_system()
     if system is None:
@@ -60,10 +60,15 @@ def add_multiple_files_interface_to_existing():
     with st.container():
 
         
+        # Проверяем, не используется ли уже единый файл
+        import os
+        if os.path.exists('ads/combined_ads_data.json'):
+            st.info("ℹ️ Обнаружены данные из единого файла. Множественная загрузка доступна как дополнительный способ.")
+        
         use_multiple = st.checkbox(
             "🔄 Использовать загрузку множественных файлов",
             key="use_multiple_files_mode",
-            help="Включите для загрузки файлов из нескольких филиалов"
+            help="Включите для загрузки файлов из нескольких филиалов (старый способ)"
         )
         
         if use_multiple:

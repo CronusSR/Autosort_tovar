@@ -66,12 +66,6 @@ from movement_recommendations_streamlit import show_movement_recommendations_pag
 
 from column_names_fix_correct import apply_correct_column_fix, check_correct_fix_status
 
-try:
-    from branch_analytics import integrate_branch_analytics
-    BRANCH_ANALYTICS_AVAILABLE = True
-except ImportError:
-    BRANCH_ANALYTICS_AVAILABLE = False
-
 from real_fix_for_your_system import (
     apply_complete_fix_to_system, 
     check_complete_fix_status,
@@ -80,6 +74,7 @@ from real_fix_for_your_system import (
 
 from warehouse_analysis_fixed_mapping import warehouse_analysis_page, add_warehouse_analysis_to_system
 
+# Модули улучшенного анализа складов отключены для использования чистой версии
 ENHANCED_WAREHOUSE_AVAILABLE = False
 
 
@@ -146,63 +141,9 @@ def init_system():
         # 🔧 ПОЛНОЕ ИСПРАВЛЕНИЕ ВСЕХ МЕТОДОВ ЗАГРУЗКИ
         apply_complete_fix_to_system(st.session_state.inventory_system)
         add_warehouse_analysis_to_system(st.session_state.inventory_system)
-    
-    # 🔄 АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ADS ИЗ JSON ФАЙЛОВ
-    system = st.session_state.inventory_system
-    load_ads_from_json_to_system(system)
         
-    return system
-
-def load_ads_from_json_to_system(system):
-    """Загружает данные ADS из JSON файлов в основную систему"""
-    import os
-    import json
-    import pandas as pd
-    
-    try:
-        ads_path = 'ads/combined_ads_data.json'
-        if os.path.exists(ads_path):
-            with open(ads_path, 'r', encoding='utf-8') as f:
-                combined_data = json.load(f)
-            
-            if 'branches' in combined_data and len(combined_data['branches']) > 0:
-                # Создаем объединенный DataFrame для совместимости
-                all_ads_data = []
-                
-                for branch_name, branch_info in combined_data['branches'].items():
-                    ads_file = f"ads/{branch_info['ads_file']}"
-                    if os.path.exists(ads_file):
-                        with open(ads_file, 'r', encoding='utf-8') as f:
-                            branch_ads = json.load(f)
-                        
-                        for item_name, item_data in branch_ads['ads_data'].items():
-                            all_ads_data.append({
-                                'номенклатура': item_name,
-                                'ads': item_data['среднедневные_продажи'],
-                                'общие_продажи': item_data['общие_продажи'],
-                                'филиал': branch_name,
-                                'категория': item_data.get('категория', ''),
-                                'подкатегория': item_data.get('подкатегория', '')
-                            })
-                
-                if all_ads_data:
-                    # Создаем DataFrame и сохраняем в систему
-                    ads_df = pd.DataFrame(all_ads_data)
-                    
-                    # Группируем по номенклатуре (берем максимальный ADS)
-                    grouped_ads = ads_df.groupby('номенклатура').agg({
-                        'ads': 'max',
-                        'общие_продажи': 'sum',
-                        'категория': 'first',
-                        'подкатегория': 'first'
-                    }).reset_index()
-                    
-                    system.calculated_ads = grouped_ads
-                    # Также сохраняем оригинальные данные
-                    system.ads_by_branches = ads_df
-                    
-    except Exception as e:
-        pass  # Если не удалось загрузить, продолжаем без ADS
+        
+    return st.session_state.inventory_system
 
 
 
@@ -374,6 +315,7 @@ def enhance_ads_page_with_multi_store_analysis(system):
                                 lambda x: ' '.join(str(x).split()[:2]) if pd.notna(x) else 'Неизвестно'
                             )
                             
+                            # ИСПРАВЛЕНО: Обновляем zero_ads_items после создания auto_subcategory
                             zero_ads_items = ads_data[ads_data['ads'] == 0]
                             
                             # Исправление по автоматическим подкатегориям
@@ -406,6 +348,7 @@ def enhance_ads_page_with_multi_store_analysis(system):
                             ads_data.loc[ads_data['ads'] == 0, 'ads'] = overall_avg
                             corrected_count += len(remaining_zero)
                     
+                    # Обновляем данные в store
                     store['ads_data'] = ads_data
                     
                     # Пересчитываем метрики магазина
@@ -1640,43 +1583,13 @@ def ads_calculation_page_updated(system):
     # Показываем анализ по магазинам если есть множественные файлы
     enhance_ads_page_with_multi_store_analysis(system)
 
-    # Добавляем поддержку единого файла продаж
     try:
-        from single_file_ads_processor import SingleFileADSProcessor
+        from integration_patch import add_multiple_files_interface_to_existing
         
-        st.subheader("📂 Способы загрузки данных")
-        
-        loading_method = st.radio(
-            "Выберите способ загрузки:",
-            ["📄 Единый файл со всеми филиалами", "📁 Множественные файлы (старый способ)"],
-            key="loading_method"
-        )
-        
-        if loading_method == "📄 Единый файл со всеми филиалами":
-            st.info("💡 Новый рекомендуемый способ: один файл содержит данные всех филиалов")
-            processor = SingleFileADSProcessor()
-            processor.create_streamlit_interface()
-            return  # ОСТАНАВЛИВАЕМСЯ ЗДЕСЬ - больше не показываем старый интерфейс
-            
-        else:
-            st.info("📁 Старый способ: загрузка отдельных файлов для каждого филиала")
-            try:
-                from integration_patch import add_multiple_files_interface_to_existing
-                
-                if add_multiple_files_interface_to_existing():
-                    return  # Если используются множественные файлы, выходим
-            except Exception as e:
-                st.error(f"Ошибка загрузки множественных файлов: {e}")
-                
-    except ImportError:
-        st.warning("⚠️ Модуль обработки единого файла не найден. Используется только множественная загрузка.")
-        try:
-            from integration_patch import add_multiple_files_interface_to_existing
-            
-            if add_multiple_files_interface_to_existing():
-                return  # Если используются множественные файлы, выходим
-        except Exception as e:
-            st.error(f"Ошибка загрузки множественных файлов: {e}")
+        if add_multiple_files_interface_to_existing():
+            return  # Если используются множественные файлы, выходим
+    except Exception as e:
+        st.error(f"Ошибка загрузки множественных файлов: {e}")
 
     
 
@@ -1896,6 +1809,7 @@ def ads_calculation_page_updated(system):
         
         if sales_file is not None:
             with st.spinner("Обработка файла с логикой ADS..."):
+                # Используем обновленный метод
                 load_result = system.load_sales_file_updated(sales_file)
                 
                 if load_result['success']:
@@ -2077,53 +1991,6 @@ def add_json_export_section(system):
     
     else:
         st.warning("JSON данные недоступны. Сначала обработайте файл ADS.")
-    
-    # Добавляем аналитику филиалов в конце страницы ADS - ВСЕГДА показываем
-    st.markdown("---")
-    st.subheader("📈 Детальная аналитика по филиалам")
-    
-    # Проверяем наличие данных филиалов
-    import os
-    
-    # Отладочная информация
-    st.write(f"🔍 **Диагностика:**")
-    st.write(f"- Файл данных существует: {'✅' if os.path.exists('ads/combined_ads_data.json') else '❌'}")
-    st.write(f"- Модуль аналитики доступен: {'✅' if BRANCH_ANALYTICS_AVAILABLE else '❌'}")
-    
-    if os.path.exists('ads/combined_ads_data.json'):
-        # Читаем и показываем информацию о данных
-        try:
-            import json
-            with open('ads/combined_ads_data.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            st.success(f"✅ **Найдены данные для {data['branches_count']} филиалов**")
-            st.write(f"Последнее обновление: {data['updated']}")
-            
-            # Показываем список филиалов
-            st.write("**Доступные филиалы:**")
-            for branch_key, branch_info in data['branches'].items():
-                st.write(f"• {branch_key}: {branch_info['items_count']} товаров")
-            
-        except Exception as e:
-            st.error(f"❌ Ошибка чтения данных: {e}")
-        
-        st.info("📊 Детальная аналитика включает ABC анализ, рейтинги товаров и анализ оборачиваемости")
-        
-        if BRANCH_ANALYTICS_AVAILABLE:
-            with st.expander("🔍 Открыть аналитику филиалов", expanded=False):
-                try:
-                    integrate_branch_analytics()
-                except Exception as e:
-                    st.error(f"❌ Ошибка загрузки аналитики: {e}")
-                    st.write(f"Детали ошибки: {str(e)}")
-        else:
-            st.error("❌ Модуль аналитики филиалов не найден")
-            st.write("Проверьте наличие файла branch_analytics.py")
-    else:
-        st.warning("⚠️ Данные филиалов не найдены")
-        st.write("Сначала загрузите единый файл продаж выше ⬆️")
-    
 def min_stock_calculation_page(system):
     """Страница расчета минимальных запасов"""
     st.header("📋 Расчет минимальных запасов")
@@ -2683,7 +2550,33 @@ def main():
     """Основная функция приложения"""
     # Инициализация системы
     system = init_system()
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔧 Диагностика исправлений")
 
+    if check_complete_fix_status(system):
+        st.sidebar.success("✅ Полное исправление активно")
+    else:
+        st.sidebar.error("❌ Исправление не применено")
+        if st.sidebar.button("🔄 Применить полное исправление"):
+            apply_complete_fix_to_system(system)
+            st.rerun()
+
+    # Кнопка диагностики
+    if st.sidebar.button("🔍 Диагностировать проблемы"):
+        diagnose_system_issues(system)
+    # НОВОЕ: Применяем интеграцию цен (если доступна)
+    if PRICE_INTEGRATION_AVAILABLE:
+        complete_price_integration_setup(system)
+        
+        # Показываем статус в sidebar
+        show_price_integration_status_in_streamlit(system)
+
+    if PRICE_FEATURES_AVAILABLE:
+        apply_price_fixes_to_system(system)
+        
+        # Добавляем статус цен в sidebar
+        show_money_integration_status(system)
+        integration_instructions()
     
     # 🚀 БЫСТРЫЙ АПГРЕЙД СКЛАДОВ в sidebar
     if ENHANCED_WAREHOUSE_AVAILABLE:
@@ -2701,25 +2594,48 @@ def main():
         st.subheader("📊 Статус системы")
         show_system_status(system)
 
+        if PRICE_FEATURES_AVAILABLE and st.button("🔍 Проверить цены"):
+            quick_price_check(system)
         
         st.markdown("---")
         
         # ВАЖНО: Определяем переменную page ЗДЕСЬ, в sidebar
-        pages_list = [
-            "🔤 ABC анализ",
-            "📊 ADS расчет",
-            "🔤📊 ABC подкатегории",
-            "🔄 Межфилиальные перемещения",
-            "⚙️ Настройки"
-        ]
-        
-        # Аналитика филиалов теперь интегрирована в ADS расчет
-        
         page = st.selectbox(
             "Выберите раздел:",
-            pages_list
+            [
+                "🔤 ABC анализ",
+                "📊 ADS расчет",
+                "🔤📊 ABC подкатегории",
+                "📋 MIN запасы",
+                "🏪 Анализ складов",
+                "⚖️ Сравнение остатков",
+                "📦 MAX остатки",
+                "🚚 Рекомендации по перемещениям", 
+                "📤 Экспорт результатов",
+                "⚙️ Настройки"
+            ]
         )
         
+        st.markdown("---")
+        
+        # Быстрые действия
+        st.subheader("⚡ Быстрые действия")
+        
+        status = system.get_system_status()
+        
+        if not status['abc_analysis']['analyzed']:
+            st.button("🔤 Начать с ABC", key="quick_abc")
+        elif not status['subcategory_analysis']['analyzed']:
+            st.button("📊 Анализ подкатегорий", key="quick_subcategory")
+        elif not status['sales_analysis']['ads_calculated']:
+            st.button("📊 Рассчитать ADS", key="quick_ads")
+        elif not status['min_stock_analysis']['calculated']:
+            st.button("📋 MIN запасы", key="quick_min")
+        elif not status['stock_analysis']['compared']:
+            st.button("⚖️ Сравнить остатки", key="quick_compare")
+        
+        else:
+            st.button("📤 Экспорт", key="quick_export")
     
     # Обработка переходов между страницами
     if st.session_state.get('goto_upgrade', False):
@@ -2743,10 +2659,27 @@ def main():
         abc_analysis_page_updated(system)
     elif page == "📊 ADS расчет":
         ads_calculation_page_updated(system)
+        if PRICE_FEATURES_AVAILABLE:
+            add_price_info_to_ads_page(system)
     elif page == "🔤📊 ABC подкатегории":  
         subcategory_abc_analysis_page(system)
-    elif page == "🔄 Межфилиальные перемещения":
-        show_movement_recommendations_page(system)
+    elif page == "📋 MIN запасы":
+        min_stock_calculation_page(system)
+    elif page == "🏪 Анализ складов":
+        warehouse_analysis_page(system)
+    elif page == "⚖️ Сравнение остатков":
+        if PRICE_FEATURES_AVAILABLE:
+            stock_comparison_page_with_money(system)  # НОВАЯ ФУНКЦИЯ
+        else:
+            stock_comparison_page(system)  # Старая функция
+    elif page == "📦 MAX остатки":
+        max_stock_page(system)
+    elif page == "🚚 Рекомендации по перемещениям":
+            show_movement_recommendations_page(system)
+    elif page == "📤 Экспорт результатов":
+        export_page(system)
+        if PRICE_FEATURES_AVAILABLE:
+            update_export_page_with_money(system)  # ДОБАВЛЯЕМ ДЕНЕЖНЫЙ ЭКСПОРТ
     elif page == "⚙️ Настройки":
         settings_page(system)
     

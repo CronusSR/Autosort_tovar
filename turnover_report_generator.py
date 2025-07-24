@@ -119,9 +119,9 @@ class TurnoverReportGenerator:
             
             # Рассчитываем дни оборачиваемости
             # ОБОР ДН = (Остаток * Период) / Продажи (по себестоимости)
-            # Период = 30 дней (месяц)
+            # Период = 30.5 дней (средний месяц)
             if cat_sales_cost > 0:
-                turnover_days = (cat_stock * 30) / cat_sales_cost
+                turnover_days = (cat_stock * 30.5) / cat_sales_cost
             else:
                 turnover_days = 0 if cat_stock == 0 else 9999  # Бесконечность для товаров без продаж
             
@@ -140,7 +140,7 @@ class TurnoverReportGenerator:
         
         # Добавляем итоговую строку
         if total_sales_cost > 0:
-            total_turnover_days = (total_stock * 30) / total_sales_cost
+            total_turnover_days = (total_stock * 30.5) / total_sales_cost
         else:
             total_turnover_days = 0
         

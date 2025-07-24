@@ -1,0 +1,26 @@
+# Команды для выполнения на сервере (root@217.114.1.117)
+
+# 1. Подключение к серверу
+ssh root@217.114.1.117
+
+# 2. Проверка текущего состояния
+cd /opt/inventory_system
+ls -la
+ps aux | grep streamlit
+
+# 3. Создание бэкапа (выполнить на сервере)
+cp -r pages pages_backup_$(date +%Y%m%d_%H%M%S)
+
+# 4. Временная остановка системы (только если нужно)
+# supervisorctl stop streamlit_app
+# или
+# pkill -f "streamlit run streamlit_modular_app.py"
+
+# 5. Проверка работы после загрузки файлов
+ps aux | grep streamlit
+tail -f streamlit.log
+
+# 6. Перезапуск если нужно
+# supervisorctl restart streamlit_app
+# или
+# cd /opt/inventory_system && source venv/bin/activate && nohup streamlit run streamlit_modular_app.py --server.port=8501 --server.address=0.0.0.0 > streamlit.log 2>&1 &

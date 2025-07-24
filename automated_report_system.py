@@ -137,7 +137,7 @@ class AutomatedReportSystem:
                     sales_data = json.load(f)
                 sales_df, period_days = enhanced_parser.parse_new_sales_data(sales_data)
             else:
-                sales_df, period_days = pd.DataFrame(), 30
+                sales_df, period_days = pd.DataFrame(), 30.5
             
             if files['stock']:
                 with open(files['stock'], 'r', encoding='utf-8') as f:
@@ -150,7 +150,7 @@ class AutomatedReportSystem:
             
         except Exception as e:
             logger.error(f"Ошибка парсинга данных: {e}")
-            return pd.DataFrame(), pd.DataFrame(), 30
+            return pd.DataFrame(), pd.DataFrame(), 30.5
     
     def generate_movement_recommendations(self, stock_df, sales_df, period_days):
         """Генерирует рекомендации по перемещению (упрощенная версия)"""

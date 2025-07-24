@@ -72,13 +72,21 @@ try:
 except ImportError:
     BRANCH_ANALYTICS_AVAILABLE = False
 
-from real_fix_for_your_system import (
-    apply_complete_fix_to_system, 
-    check_complete_fix_status,
-    diagnose_system_issues
-)
+try:
+    from real_fix_for_your_system import (
+        apply_complete_fix_to_system, 
+        check_complete_fix_status,
+        diagnose_system_issues
+    )
+    REAL_FIX_AVAILABLE = True
+except ImportError:
+    REAL_FIX_AVAILABLE = False
 
-from warehouse_analysis_fixed_mapping import warehouse_analysis_page, add_warehouse_analysis_to_system
+try:
+    from warehouse_analysis_fixed_mapping import warehouse_analysis_page, add_warehouse_analysis_to_system
+    WAREHOUSE_MAPPING_AVAILABLE = True
+except ImportError:
+    WAREHOUSE_MAPPING_AVAILABLE = False
 
 ENHANCED_WAREHOUSE_AVAILABLE = False
 
@@ -143,9 +151,12 @@ def init_system():
     if 'inventory_system' not in st.session_state:
         st.session_state.inventory_system = ModularInventorySystem()
         
-        # 🔧 ПОЛНОЕ ИСПРАВЛЕНИЕ ВСЕХ МЕТОДОВ ЗАГРУЗКИ
-        apply_complete_fix_to_system(st.session_state.inventory_system)
-        add_warehouse_analysis_to_system(st.session_state.inventory_system)
+        # 🔧 ПОЛНОЕ ИСПРАВЛЕНИЕ ВСЕХ МЕТОДОВ ЗАГРУЗКИ (если доступно)
+        if REAL_FIX_AVAILABLE:
+            apply_complete_fix_to_system(st.session_state.inventory_system)
+        
+        if WAREHOUSE_MAPPING_AVAILABLE:
+            add_warehouse_analysis_to_system(st.session_state.inventory_system)
     
     # 🔄 АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ADS ИЗ JSON ФАЙЛОВ
     system = st.session_state.inventory_system

@@ -119,6 +119,25 @@ def receive_sales_data():
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         logging.info(f"Получен файл продаж: {filename}")
+
+        # Интеграция с накопителем данных
+        try:
+            from webhook_data_accumulator import WebhookDataAccumulator
+            accumulator = WebhookDataAccumulator()
+            
+            # Обрабатываем файл накопителем
+            if filename.startswith('sales_'):
+                result = accumulator.process_new_sales_file(file_path)
+                logging.info(f"Накопитель: {result}")
+            elif filename.startswith('stock_'):
+                result = accumulator.process_new_stock_file(file_path)
+                logging.info(f"Накопитель: {result}")
+                
+        except ImportError:
+            logging.warning("Модуль накопителя данных не найден - работаем в обычном режиме")
+        except Exception as e:
+            logging.error(f"Ошибка при работе с накопителем: {e}")
+
         
         # Отправляем уведомление (можно добавить интеграцию с Telegram/email)
         return jsonify({

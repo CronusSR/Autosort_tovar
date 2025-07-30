@@ -14,22 +14,6 @@ from datetime import datetime, timedelta
 from webhook_data_accumulator import WebhookDataAccumulator
 import json
 import time
-import os
-import pickle
-
-# Импорт pytz с fallback
-try:
-    import pytz
-    PYTZ_AVAILABLE = True
-except ImportError:
-    PYTZ_AVAILABLE = False
-    # Fallback для работы без pytz
-    class SimpleTimezone:
-        def __init__(self, name):
-            self.name = name
-        def localize(self, dt):
-            return dt
-    pytz = type('pytz', (), {'timezone': lambda name: SimpleTimezone(name)})()
 
 # Импорт системы инвентаризации
 try:
@@ -47,122 +31,15 @@ st.set_page_config(
 
 # Словарь городов по филиалам
 BRANCH_CITIES = {
-    "База Склад Фурнитура Комплект": "Алматы",
-    "Казыбаева Склад Фурнитура TRADE": "Алматы",
+    "База Склад Фурнитура Комплект (г.Алматы)": "Алматы",
+    "Казыбаева Склад Фурнитура TRADE (г.Казыбаева)": "Алматы",
     "ТД Казыбаева ФУРНИТУРА магазин": "Алматы",
-    "Барыс Склад Фурнитура TRADE": "Алматы",
-    "АО Склад Фурнитура TRADE": "Алматы",
-    "склад фурнитура № 1": "Астана",
-    "Магазин фурнитуры": "Астана",
-    "4 Склад фурнитуры АЗМ Шымкент \"Овощная база\"": "Шымкент",
+    "Барыс Склад Фурнитура TRADE (г.Барыс)": "Алматы",
+    "АО Склад Фурнитура TRADE (г.Алматы)": "Алматы",
+    "склад фурнитура № 1 (г.Астана)": "Астана",
+    "Магазин фурнитуры (г.Астана)": "Астана",
+    "4 Склад фурнитуры АЗМ Шымкент (г.Шымкент) \"Овощная база\"": "Шымкент",
     "6 Склад фурнитуры \"Овощная база\" Магазин продажи": "Шымкент"
-}
-
-# Иерархическая структура складов (правильная согласно требованиям)
-WAREHOUSE_HIERARCHY = {
-    # ХАБ (уровень 1) - главный склад
-    'База Склад Фурнитура Комплект': {
-        'level': 1,
-        'type': 'hub',
-        'city': 'Алматы',
-        'parent': None,
-        'children': [
-            'Казыбаева Склад Фурнитура TRADE',
-            'склад фурнитура № 1',
-            '4 Склад фурнитуры АЗМ Шымкент',
-            'Барыс Склад Фурнитура TRADE',
-            'АО Склад Фурнитура TRADE'
-        ],
-        'min_days': 30,
-        'max_days': 90,
-        'description': 'Главный хаб - пополняет все склады 2-го уровня'
-    },
-    
-    # СКЛАДЫ 2-го уровня (питаются от хаба)
-    'Казыбаева Склад Фурнитура TRADE': {
-        'level': 2,
-        'type': 'warehouse',
-        'city': 'Алматы',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': ['ТД Казыбаева ФУРНИТУРА магазин'],
-        'min_days': 15,
-        'max_days': 45,
-        'description': 'Склад 2-го уровня → пополняет магазин Казыбаева'
-    },
-    'склад фурнитура № 1': {
-        'level': 2,
-        'type': 'warehouse',
-        'city': 'Астана',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': ['Магазин фурнитуры'],
-        'min_days': 20,
-        'max_days': 60,
-        'description': 'Склад 2-го уровня → пополняет Магазин фурнитуры'
-    },
-    '4 Склад фурнитуры АЗМ Шымкент': {
-        'level': 2,
-        'type': 'warehouse',
-        'city': 'Шымкент',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': ['6 Склад фурнитуры "Овощная база" Магазин'],
-        'min_days': 20,
-        'max_days': 60,
-        'description': 'Склад 2-го уровня → пополняет магазин в Шымкенте'
-    },
-    
-    # МАГАЗИНЫ НАПРЯМУЮ ОТ ХАБА (без своих складов)
-    'Барыс Склад Фурнитура TRADE': {
-        'level': 2,
-        'type': 'shop',
-        'city': 'Барыс',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': [],
-        'min_days': 15,
-        'max_days': 45,
-        'description': 'Магазин напрямую от хаба'
-    },
-    'АО Склад Фурнитура TRADE': {
-        'level': 2,
-        'type': 'shop',
-        'city': 'Алтын Орда',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': [],
-        'min_days': 10,
-        'max_days': 30,
-        'description': 'Магазин напрямую от хаба (кромочные материалы)'
-    },
-    
-    # МАГАЗИНЫ 3-го уровня (питаются от складов 2-го уровня)
-    'ТД Казыбаева ФУРНИТУРА магазин': {
-        'level': 3,
-        'type': 'shop',
-        'city': 'Алматы',
-        'parent': 'Казыбаева Склад Фурнитура TRADE',
-        'children': [],
-        'min_days': 8,
-        'max_days': 30,
-        'description': 'Магазин 3-го уровня ← от Казыбаева склад'
-    },
-    'Магазин фурнитуры': {
-        'level': 3,
-        'type': 'shop',
-        'city': 'Астана',
-        'parent': 'склад фурнитура № 1',
-        'children': [],
-        'min_days': 8,
-        'max_days': 30,
-        'description': 'Магазин 3-го уровня ← от склад № 1'
-    },
-    '6 Склад фурнитуры "Овощная база" Магазин': {
-        'level': 3,
-        'type': 'shop',
-        'city': 'Шымкент',
-        'parent': '4 Склад фурнитуры АЗМ Шымкент',
-        'children': [],
-        'min_days': 8,
-        'max_days': 30,
-        'description': 'Магазин 3-го уровня ← от Шымкент склад'
-    }
 }
 
 def get_city_from_branch(branch_name):
@@ -181,148 +58,10 @@ def get_city_from_branch(branch_name):
     
     return "Другой"
 
-def get_warehouse_info(warehouse_name):
-    """Получить информацию о складе из иерархии"""
-    for name, info in WAREHOUSE_HIERARCHY.items():
-        if name in warehouse_name or warehouse_name in name:
-            return info
-    return None
-
-def get_warehouse_level(warehouse_name):
-    """Получить уровень склада в иерархии"""
-    info = get_warehouse_info(warehouse_name)
-    return info['level'] if info else 0
-
-def get_warehouse_type(warehouse_name):
-    """Получить тип склада (hub/warehouse/shop)"""
-    info = get_warehouse_info(warehouse_name)
-    return info['type'] if info else 'unknown'
-
-def get_parent_warehouse(warehouse_name):
-    """Получить родительский склад"""
-    info = get_warehouse_info(warehouse_name)
-    return info['parent'] if info else None
-
-def get_children_warehouses(warehouse_name):
-    """Получить дочерние склады"""
-    info = get_warehouse_info(warehouse_name)
-    return info['children'] if info else []
-
-def calculate_stock_requirements(ads, warehouse_name):
-    """Расчет минимальных и максимальных остатков на основе ADS и типа склада"""
-    info = get_warehouse_info(warehouse_name)
-    if not info:
-        # Дефолтные значения для неизвестных складов
-        min_days, max_days = 8, 30
-    else:
-        min_days, max_days = info['min_days'], info['max_days']
-    
-    min_stock = ads * min_days
-    max_stock = ads * max_days
-    return min_stock, max_stock
-
-# Система кэширования ABC анализа
-CACHE_DIR = "cache"
-ABC_CACHE_FILE = os.path.join(CACHE_DIR, "abc_analysis_cache.pkl")
-VLADIVOSTOK_TZ = pytz.timezone('Asia/Vladivostok') if PYTZ_AVAILABLE else None
-
-def ensure_cache_dir():
-    """Создает директорию для кэша если её нет"""
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
-
-def should_update_abc_cache():
-    """Проверяет нужно ли обновить кэш ABC анализа"""
-    if not PYTZ_AVAILABLE:
-        return True
-    
-    if not os.path.exists(ABC_CACHE_FILE):
-        return True
-    
-    # Получаем время последнего обновления кэша
-    cache_time = datetime.fromtimestamp(os.path.getmtime(ABC_CACHE_FILE))
-    if VLADIVOSTOK_TZ:
-        cache_time_vl = VLADIVOSTOK_TZ.localize(cache_time)
-        now_vl = datetime.now(VLADIVOSTOK_TZ)
-    else:
-        cache_time_vl = cache_time
-        now_vl = datetime.now()
-    
-    # Проверяем прошло ли время для автообновления (20:00 по Владивостоку)
-    today_update_time = now_vl.replace(hour=20, minute=0, second=0, microsecond=0)
-    yesterday_update_time = today_update_time - timedelta(days=1)
-    
-    # Если кэш старше чем сегодняшние 20:00 и уже наступило время обновления
-    if cache_time_vl < today_update_time and now_vl >= today_update_time:
-        return True
-    
-    # Если кэш старше 24 часов
-    if now_vl - cache_time_vl > timedelta(hours=24):
-        return True
-    
-    return False
-
-def save_abc_cache(abc_data):
-    """Сохраняет результаты ABC анализа в кэш"""
-    if not PYTZ_AVAILABLE:
-        return None
-    
-    ensure_cache_dir()
-    try:
-        with open(ABC_CACHE_FILE, 'wb') as f:
-            pickle.dump({
-                'data': abc_data,
-                'timestamp': datetime.now(VLADIVOSTOK_TZ) if VLADIVOSTOK_TZ else datetime.now(),
-                'version': '1.0'
-            }, f)
-        return True
-    except Exception as e:
-        st.error(f"Ошибка сохранения кэша: {e}")
-        return False
-
-def load_abc_cache():
-    """Загружает результаты ABC анализа из кэша"""
-    if not PYTZ_AVAILABLE:
-        return None
-    
-    try:
-        if os.path.exists(ABC_CACHE_FILE):
-            with open(ABC_CACHE_FILE, 'rb') as f:
-                cache = pickle.load(f)
-                return cache['data'], cache['timestamp']
-    except Exception as e:
-        st.error(f"Ошибка загрузки кэша: {e}")
-    return None, None
-
-def get_cache_status():
-    """Возвращает информацию о состоянии кэша"""
-    if not PYTZ_AVAILABLE:
-        return None
-    
-    if not os.path.exists(ABC_CACHE_FILE):
-        return "Кэш не создан"
-    
-    cache_time = datetime.fromtimestamp(os.path.getmtime(ABC_CACHE_FILE))
-    if VLADIVOSTOK_TZ:
-        cache_time_vl = VLADIVOSTOK_TZ.localize(cache_time)
-        now_vl = datetime.now(VLADIVOSTOK_TZ)
-    else:
-        cache_time_vl = cache_time
-        now_vl = datetime.now()
-    
-    age = now_vl - cache_time_vl
-    
-    if age < timedelta(hours=1):
-        return f"Обновлен {int(age.total_seconds() / 60)} мин назад"
-    elif age < timedelta(days=1):
-        return f"Обновлен {int(age.total_seconds() / 3600)} ч назад"
-    else:
-        return f"Обновлен {age.days} дн назад"
-
 def calculate_turnover(stock_data, sales_data, period_days=30.5):
     """
     Расчет оборачиваемости по формуле: (остатки / продажи) * период
-    Период = 30.5 дней (средний месяц)
+    Период = 30.5.5 дней (средний месяц)
     Результат - количество дней, за которые продается текущий остаток
     """
     if sales_data.empty or stock_data.empty:
@@ -351,7 +90,7 @@ def calculate_turnover(stock_data, sales_data, period_days=30.5):
         how='inner'
     )
     
-    # Расчет оборачиваемости (остатки / дневные_продажи * период)
+    # Расчет оборачиваемости - ИСПРАВЛЕНО: добавлено * period_days
     turnover_data['turnover_days'] = np.where(
         turnover_data['daily_sales'] > 0,
         (turnover_data['stock_quantity'] / turnover_data['daily_sales']) * period_days,
@@ -538,7 +277,7 @@ def calculate_turnover_by_city(stock_data, sales_data, period_days=30.5):
         how='inner'
     )
     
-    # Расчет оборачиваемости (остатки / дневные_продажи * период)
+    # Расчет оборачиваемости - ИСПРАВЛЕНО: добавлено * period_days
     city_turnover['turnover_days'] = np.where(
         city_turnover['daily_sales'] > 0,
         (city_turnover['stock_quantity'] / city_turnover['daily_sales']) * period_days,
@@ -617,8 +356,16 @@ with st.sidebar:
     # Обновляем состояние
     st.session_state.selected_period = period_option
     
-    # Рассчитываем даты
-    end_date = datetime.now().date()
+    # Рассчитываем даты на основе имеющихся данных
+    # Сначала получаем информацию о доступных данных
+    data_summary = accumulator.get_data_summary()
+    
+    if data_summary['sales']['last_date']:
+        # Используем последнюю дату из данных как конечную точку
+        end_date = pd.to_datetime(data_summary['sales']['last_date']).date()
+    else:
+        end_date = datetime.now().date()
+    
     if period_option == "Последние 30 дней":
         start_date = end_date - timedelta(days=30)
     elif period_option == "Последние 60 дней":
@@ -706,45 +453,79 @@ with tab1:
         # Динамика продаж
         st.subheader("📈 Динамика продаж")
         
-        daily_sales = sales_data.groupby('date').agg({
-            'amount': 'sum',
-            'quantity': 'sum'
-        }).reset_index()
+        if sales_data.empty:
+            st.warning("Нет данных о продажах за выбранный период")
+        else:
+            daily_sales = sales_data.groupby('date').agg({
+                'amount': 'sum',
+                'quantity': 'sum'
+            }).reset_index()
+            
+            # Сортируем по дате для правильного отображения
+            daily_sales = daily_sales.sort_values('date')
+            
+            # Показываем статистику по периоду
+            st.info(f"📊 Данные за период: {daily_sales['date'].min()} - {daily_sales['date'].max()} ({len(daily_sales)} дней)")
         
-        # График с двумя осями
-        fig = go.Figure()
+            # График с двумя осями (только если есть данные)
+            if not daily_sales.empty:
+                fig = go.Figure()
+                
+                fig.add_trace(go.Scatter(
+                    x=daily_sales['date'],
+                    y=daily_sales['amount'],
+                    mode='lines+markers',
+                    name='Выручка (₸)',
+                    line=dict(color='#1f77b4', width=2),
+                    marker=dict(size=4)
+                ))
+                
+                fig.add_trace(go.Scatter(
+                    x=daily_sales['date'],
+                    y=daily_sales['quantity'],
+                    mode='lines+markers',
+                    name='Количество',
+                    line=dict(color='#ff7f0e', width=2),
+                    marker=dict(size=4),
+                    yaxis='y2'
+                ))
+                
+                fig.update_layout(
+                    title=f'Динамика продаж по дням ({len(daily_sales)} точек данных)',
+                    xaxis_title='Дата',
+                    yaxis_title='Выручка (₸)',
+                    yaxis2=dict(
+                        title='Количество (шт)',
+                        overlaying='y',
+                        side='right'
+                    ),
+                    hovermode='x unified',
+                    height=400,
+                    showlegend=True
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.error("Нет данных для построения графика динамики")
         
-        fig.add_trace(go.Scatter(
-            x=daily_sales['date'],
-            y=daily_sales['amount'],
-            mode='lines',
-            name='Выручка (₸)',
-            line=dict(color='#1f77b4', width=2)
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=daily_sales['date'],
-            y=daily_sales['quantity'],
-            mode='lines',
-            name='Количество',
-            line=dict(color='#ff7f0e', width=2),
-            yaxis='y2'
-        ))
-        
-        fig.update_layout(
-            title='Динамика продаж по дням',
-            xaxis_title='Дата',
-            yaxis_title='Выручка (₸)',
-            yaxis2=dict(
-                title='Количество (шт)',
-                overlaying='y',
-                side='right'
-            ),
-            hovermode='x unified',
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        # Отладочная информация (можно убрать после исправления)
+        with st.expander("🔍 Отладочная информация"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Параметры запроса:**")
+                st.write(f"- Начальная дата: {start_date}")
+                st.write(f"- Конечная дата: {end_date}")
+                st.write(f"- Выбранный период: {period_option}")
+            
+            with col2:
+                st.write("**Статистика данных:**")
+                if not sales_data.empty:
+                    st.write(f"- Записей загружено: {len(sales_data)}")
+                    st.write(f"- Уникальных дат: {sales_data['date'].nunique()}")
+                    st.write(f"- Первая дата: {sales_data['date'].min()}")
+                    st.write(f"- Последняя дата: {sales_data['date'].max()}")
+                else:
+                    st.write("- Нет данных для отображения")
         
         # Топ товаров
         col1, col2 = st.columns(2)
@@ -817,15 +598,20 @@ with tab2:
             st.subheader("📊 Распределение товаров по оборачиваемости")
             
             turnover_distribution = turnover_data['turnover_category'].value_counts().reset_index()
-            turnover_distribution.columns = ['category', 'count']  # Переименовываем колонки
+            
+            # Исправляем названия колонок для совместимости
+            if 'index' not in turnover_distribution.columns:
+                turnover_distribution.columns = ['category_name', 'count']
+            else:
+                turnover_distribution.columns = ['category_name', 'count']
             
             fig_dist = px.bar(
                 turnover_distribution,
-                x='category',
+                x='category_name',
                 y='count',
                 title='Распределение товаров по скорости оборачиваемости',
-                labels={'category': 'Категория оборачиваемости', 'count': 'Количество SKU'},
-                color='category',
+                labels={'category_name': 'Категория оборачиваемости', 'count': 'Количество SKU'},
+                color='category_name',
                 color_discrete_map={
                     'Высокая (< 30 дней)': '#2ecc71',
                     'Хорошая (30-60)': '#3498db',
@@ -978,375 +764,509 @@ with tab3:
 with tab4:
     st.header("📦 ABC анализ по категориям")
     
-    # Панель управления кэшем
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        cache_status = get_cache_status()
-        st.info(f"📊 Статус кэша: {cache_status}")
-    with col2:
-        force_update = st.button("🔄 Обновить данные", key="abc_update_btn")
-    with col3:
-        if st.button("🗑️ Очистить кэш", key="abc_clear_btn"):
-            if os.path.exists(ABC_CACHE_FILE):
-                os.remove(ABC_CACHE_FILE)
-                st.success("Кэш очищен")
-                st.rerun()
-    
     if not sales_data.empty and 'category_path' in sales_data.columns:
-        # Инициализация состояния раскрытых категорий
-        if 'expanded_categories' not in st.session_state:
-            st.session_state.expanded_categories = set()
+        # Инициализация навигации и постоянного кеша
+        if 'abc_current_path' not in st.session_state:
+            st.session_state.abc_current_path = []
+        if 'abc_cache' not in st.session_state:
+            st.session_state.abc_cache = {}
         
-        def build_category_tree(_df):
-            """Строит дерево категорий из данных с продвинутым кэшированием"""
-            # Проверяем нужно ли обновить кэш или была нажата кнопка обновления
-            if should_update_abc_cache() or force_update:
-                with st.spinner("🔄 Обновление ABC анализа... Это может занять несколько минут"):
-                    tree = {}
+        # Путь к файлу постоянного кеша
+        import os
+        import hashlib
+        
+        CACHE_DIR = "/tmp/abc_cache"
+        if not os.path.exists(CACHE_DIR):
+            os.makedirs(CACHE_DIR)
+        
+        def get_data_hash(df):
+            """Создает хеш данных для определения изменений"""
+            return hashlib.md5(str(df.shape[0]).encode() + str(df['amount'].sum()).encode()).hexdigest()[:10]
+        
+        def save_persistent_cache(cache_key, data, data_hash):
+            """Сохраняет анализ в постоянный файл"""
+            try:
+                cache_file = os.path.join(CACHE_DIR, f"abc_{cache_key}_{data_hash}.json")
+                
+                # Преобразуем DataFrame в словарь для JSON
+                if isinstance(data[0], pd.DataFrame):
+                    df_dict = data[0].to_dict('records')
+                    breadcrumbs = data[1]
+                    cache_data = {'dataframe': df_dict, 'breadcrumbs': breadcrumbs}
                     
-                    # Берем выборку для ускорения если данных много
-                    if len(_df) > 50000:
-                        df_sample = _df.sample(n=30000, random_state=42)
-                        st.info("📊 Используется оптимизированная выборка для ABC анализа")
-                    else:
-                        df_sample = _df
+                    with open(cache_file, 'w', encoding='utf-8') as f:
+                        json.dump(cache_data, f, ensure_ascii=False, default=str)
+                    
+                    return cache_file
+            except Exception as e:
+                st.warning(f"⚠️ Не удалось сохранить кеш: {e}")
+            return None
+        
+        def load_persistent_cache(cache_key, data_hash):
+            """Загружает анализ из постоянного файла"""
+            try:
+                cache_file = os.path.join(CACHE_DIR, f"abc_{cache_key}_{data_hash}.json")
+                
+                if os.path.exists(cache_file):
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    
+                    # Восстанавливаем DataFrame из словаря
+                    df = pd.DataFrame(cache_data['dataframe'])
+                    breadcrumbs = cache_data['breadcrumbs']
+                    
+                    return (df, breadcrumbs)
+            except Exception as e:
+                st.warning(f"⚠️ Не удалось загрузить кеш: {e}")
+            return None
+        
+        def clean_old_cache_files():
+            """Очищает старые файлы кеша (старше 24 часов)"""
+            try:
+                import time
+                current_time = time.time()
+                for filename in os.listdir(CACHE_DIR):
+                    file_path = os.path.join(CACHE_DIR, filename)
+                    if os.path.isfile(file_path):
+                        file_age = current_time - os.path.getmtime(file_path)
+                        if file_age > 24 * 3600:  # 24 часа
+                            os.remove(file_path)
+            except Exception:
+                pass  # Игнорируем ошибки очистки
+        
+        def calculate_abc_with_hierarchy(_sales_df, level_path=None):
+            """Расчет ABC анализа с поддержкой иерархии и постоянного кеширования"""
+            if level_path is None:
+                level_path = []
             
-            for _, row in df_sample.iterrows():
+            # Создаем ключ для кеша и хеш данных
+            safe_path = '_'.join([p.replace(' ', '_').replace('/', '_') for p in level_path])
+            cache_key = f"{len(level_path)}_{safe_path}" if safe_path else f"{len(level_path)}_root"
+            data_hash = get_data_hash(_sales_df)
+            
+            # Проверяем session_state кеш
+            session_cache_key = f"abc_{cache_key}"
+            if session_cache_key in st.session_state.abc_cache:
+                return st.session_state.abc_cache[session_cache_key]
+            
+            # Проверяем постоянный кеш
+            persistent_result = load_persistent_cache(cache_key, data_hash)
+            if persistent_result is not None:
+                # Сохраняем в session_state для быстрого доступа
+                st.session_state.abc_cache[session_cache_key] = persistent_result
+                return persistent_result
+            
+            # Создаем копию данных
+            df_work = _sales_df.copy()
+            
+            # Определяем текущий уровень для анализа (обратный порядок в JSON)
+            current_level = len(level_path)
+            categories_data = []
+            
+            for _, row in df_work.iterrows():
                 if pd.isna(row['category_path']) or row['category_path'] == '':
                     continue
-                    
-                # Разбиваем путь на части (только первые 3 уровня для скорости)
-                parts = [p.strip() for p in str(row['category_path']).split('/') if p.strip()][:3]
                 
-                # Строим дерево
-                current_node = tree
-                for i, part in enumerate(parts):
-                    if part not in current_node:
-                        current_node[part] = {
-                            'children': {},
-                            'items': [],
-                            'total_amount': 0,
-                            'total_quantity': 0,
-                            'level': i,
-                            'path': parts[:i+1]
-                        }
-                    
-                    current_node[part]['items'].append(row)
-                    current_node[part]['total_amount'] += row['amount']
-                    current_node[part]['total_quantity'] += row['quantity']
-                    current_node = current_node[part]['children']
+                # Разбиваем путь категорий (в JSON путь от конкретного к общему)
+                parts = [p.strip() for p in str(row['category_path']).split('/') if p.strip()]
                 
-                # Сохраняем результат в кэш
-                if save_abc_cache(tree):
-                    now_time = datetime.now(VLADIVOSTOK_TZ) if VLADIVOSTOK_TZ else datetime.now()
-                    st.success(f"✅ ABC анализ обновлен в {now_time.strftime('%H:%M')} {'(Владивосток)' if VLADIVOSTOK_TZ else ''}")
-                
-                return tree
-            else:
-                # Загружаем из кэша
-                cached_tree, cache_time = load_abc_cache()
-                if cached_tree is not None:
-                    st.info(f"📊 Загружен из кэша (обновлен: {cache_time.strftime('%d.%m.%Y %H:%M')})")
-                    return cached_tree
+                # В JSON структура: "Конкретная/Подкатегория/Основная/Мебельная фурнитура/"
+                # Нам нужна "Основная" как корневая категория, а "Мебельная фурнитура" - это всегда последняя
+                if len(parts) > 1 and parts[-1] == "Мебельная фурнитура":
+                    # Убираем "Мебельная фурнитура" и разворачиваем остальное
+                    actual_parts = parts[:-1]  # Убираем последний элемент
+                    parts = list(reversed(actual_parts))  # Разворачиваем
                 else:
-                    # Фолбэк - строим дерево если кэш недоступен
-                    return build_category_tree(_df)
-        
-        def calculate_abc_for_level(items_data):
-            """Вычисляет ABC для набора элементов"""
-            if not items_data:
-                return []
+                    # Если структура другая, просто разворачиваем
+                    parts = list(reversed(parts))
+                
+                # Проверяем соответствие текущему пути навигации
+                if level_path:
+                    # Проверяем что путь соответствует
+                    path_matches = True
+                    for i, path_part in enumerate(level_path):
+                        if i >= len(parts) or parts[i] != path_part:
+                            path_matches = False
+                            break
+                    if not path_matches:
+                        continue
+                
+                # Берем категорию нужного уровня
+                if len(parts) > current_level:
+                    category_name = parts[current_level]
+                    categories_data.append({
+                        'category': category_name,
+                        'amount': row['amount'],
+                        'quantity': row['quantity'],
+                        'full_path': '/'.join(parts[:current_level+1]),
+                        'has_children': len(parts) > current_level + 1,
+                        'item_code': row.get('item_code', ''),
+                        'item_name': row.get('item_name', ''),
+                        'original_parts': parts  # Для отладки
+                    })
+                elif len(parts) == current_level and current_level > 0:
+                    # Это товары на последнем уровне
+                    categories_data.append({
+                        'category': f"{row.get('item_code', 'N/A')} - {row.get('item_name', 'N/A')}",
+                        'amount': row['amount'],
+                        'quantity': row['quantity'],
+                        'full_path': '',
+                        'has_children': False,
+                        'item_code': row.get('item_code', ''),
+                        'item_name': row.get('item_name', ''),
+                        'original_parts': parts
+                    })
+            
+            if not categories_data:
+                return pd.DataFrame(), []
+            
+            # Группируем данные
+            cat_df = pd.DataFrame(categories_data)
+            
+            # Если это уровень товаров (нет детей), группируем по товарам
+            if not cat_df['has_children'].any() and current_level > 0:
+                # Уровень товаров
+                category_summary = cat_df.groupby(['item_code', 'item_name']).agg({
+                    'amount': 'sum',
+                    'quantity': 'sum'
+                }).reset_index()
+                category_summary['category'] = category_summary['item_code'] + ' - ' + category_summary['item_name']
+                category_summary['has_children'] = False
+                category_summary['full_path'] = ''
+            else:
+                # Уровень категорий
+                category_summary = cat_df.groupby(['category', 'full_path']).agg({
+                    'amount': 'sum',
+                    'quantity': 'sum',
+                    'has_children': 'first'
+                }).reset_index()
             
             # Сортируем по выручке
-            sorted_items = sorted(items_data, key=lambda x: x['total_amount'], reverse=True)
-            total_revenue = sum(item['total_amount'] for item in sorted_items)
+            category_summary = category_summary.sort_values('amount', ascending=False)
             
-            cumsum = 0
-            for item in sorted_items:
-                cumsum += item['total_amount']
-                percent = (cumsum / total_revenue * 100) if total_revenue > 0 else 0
+            # Добавляем ABC классификацию
+            total_amount = category_summary['amount'].sum()
+            
+            # Рассчитываем проценты только если есть выручка
+            if total_amount > 0:
+                category_summary['percentage'] = (category_summary['amount'] / total_amount) * 100
+                category_summary['cumulative_percentage'] = category_summary['percentage'].cumsum()
                 
-                if percent <= 80:
-                    item['abc'] = 'A'
-                elif percent <= 95:
-                    item['abc'] = 'B'
-                else:
-                    item['abc'] = 'C'
-                    
-                item['percent'] = (item['total_amount'] / total_revenue * 100) if total_revenue > 0 else 0
+                # ABC классификация по накопительному проценту
+                def assign_abc(row):
+                    cum_perc = row['cumulative_percentage']
+                    if cum_perc <= 80:
+                        return 'A'
+                    elif cum_perc <= 95:
+                        return 'B'
+                    else:
+                        return 'C'
+                
+                category_summary['ABC'] = category_summary.apply(assign_abc, axis=1)
+            else:
+                # Если нет выручки, все в группу C
+                category_summary['percentage'] = 0
+                category_summary['cumulative_percentage'] = 0
+                category_summary['ABC'] = 'C'
             
-            return sorted_items
+            # Возвращаем данные и хлебные крошки
+            breadcrumbs = level_path.copy()
+            
+            result = (category_summary, breadcrumbs)
+            
+            # Сохраняем в session_state кеш
+            st.session_state.abc_cache[session_cache_key] = result
+            
+            # Сохраняем в постоянный кеш
+            save_persistent_cache(cache_key, result, data_hash)
+            
+            return result
         
-        def render_category_level(tree, level=0, parent_path=""):
-            """Рендерит уровень категорий с возможностью раскрытия"""
+        # Очищаем старые файлы кеша при каждом запуске
+        clean_old_cache_files()
+        
+        # Получаем данные для текущего уровня
+        abc_categories, breadcrumbs = calculate_abc_with_hierarchy(sales_data, st.session_state.abc_current_path)
+        
+        # Отладочная информация
+        if st.checkbox("🔍 Показать отладочную информацию", key="debug_abc"):
+            st.write(f"**Текущий путь навигации:** {st.session_state.abc_current_path}")
+            st.write(f"**Количество строк в sales_data:** {len(sales_data)}")
+            st.write(f"**Есть ли category_path:** {'category_path' in sales_data.columns}")
             
-            # Подготавливаем данные для ABC анализа
-            level_data = []
-            for name, data in tree.items():
-                level_data.append({
-                    'name': name,
-                    'total_amount': data['total_amount'],
-                    'total_quantity': data['total_quantity'],
-                    'items_count': len(data['items']),
-                    'has_children': bool(data['children']),
-                    'path': parent_path + "/" + name if parent_path else name
-                })
+            # Информация о кешировании
+            safe_path = '_'.join([p.replace(' ', '_').replace('/', '_') for p in st.session_state.abc_current_path])
+            cache_key = f"{len(st.session_state.abc_current_path)}_{safe_path}" if safe_path else f"{len(st.session_state.abc_current_path)}_root"
+            session_cache_key = f"abc_{cache_key}"
+            data_hash = get_data_hash(sales_data)
             
-            # Вычисляем ABC
-            abc_data = calculate_abc_for_level(level_data)
+            st.write(f"**Ключ кеша:** `{cache_key}`")
+            st.write(f"**Хеш данных:** `{data_hash}`")
+            st.write(f"**Session кеш:** {len(st.session_state.abc_cache)} записей")
+            st.write(f"**Данные из session:** {'Да' if session_cache_key in st.session_state.abc_cache else 'Нет'}")
             
-            if not abc_data:
-                return
+            # Проверяем постоянный кеш
+            persistent_file = os.path.join(CACHE_DIR, f"abc_{cache_key}_{data_hash}.json")
+            st.write(f"**Постоянный файл:** {'Существует' if os.path.exists(persistent_file) else 'Не найден'}")
+            
+            # Показываем файлы в кеш-директории
+            cache_files = os.listdir(CACHE_DIR) if os.path.exists(CACHE_DIR) else []
+            st.write(f"**Файлов в кеше:** {len(cache_files)}")
+            
+            # Показываем примеры путей категорий из данных
+            sample_paths = sales_data['category_path'].dropna().unique()[:5]
+            st.write("**Примеры путей категорий из данных:**")
+            for i, path in enumerate(sample_paths):
+                parts = [p.strip() for p in str(path).split('/') if p.strip()]
+                st.write(f"{i+1}. `{path}` → {parts}")
+            
+            if not abc_categories.empty:
+                st.write(f"**Количество найденных элементов:** {len(abc_categories)}")
+                
+                # Проверяем странные проценты
+                strange_percentages = abc_categories[abc_categories['percentage'] < 0.001]
+                if not strange_percentages.empty:
+                    st.warning(f"⚠️ Найдено {len(strange_percentages)} элементов с очень маленькими процентами (<0.001%)")
+                    st.write("**Примеры:**")
+                    st.write(strange_percentages.head(3))
+            else:
+                st.write("**abc_categories пустой!**")
+        
+        if not abc_categories.empty:
+            # Хлебные крошки навигации
+            if breadcrumbs:
+                st.subheader("🧭 Навигация:")
+                nav_col1, nav_col2 = st.columns([1, 4])
+                
+                with nav_col1:
+                    if st.button("🏠 Корень", key="nav_root_button"):
+                        st.session_state.abc_current_path = []
+                        st.cache_data.clear()
+                        st.rerun()
+                
+                with nav_col2:
+                    breadcrumb_text = " → ".join(breadcrumbs)
+                    st.write(f"**Текущий путь:** {breadcrumb_text}")
+                        
+            # Кнопки управления и информация о кеше
+            col_nav1, col_nav2, col_nav3, col_nav4 = st.columns([1, 1, 1, 1])
+            
+            with col_nav1:
+                if st.button("🏠 Корень", key="nav_to_root"):
+                    st.session_state.abc_current_path = []
+                    st.rerun()
+            
+            with col_nav2:
+                if st.session_state.abc_current_path and st.button("⬅️ Назад", key="nav_back"):
+                    st.session_state.abc_current_path.pop()
+                    st.rerun()
+            
+            with col_nav3:
+                if st.button("🔄 Очистить кеш", key="clear_cache"):
+                    # Очищаем session_state кеш
+                    st.session_state.abc_cache = {}
+                    
+                    # Очищаем постоянные файлы кеша
+                    try:
+                        import shutil
+                        if os.path.exists(CACHE_DIR):
+                            shutil.rmtree(CACHE_DIR)
+                            os.makedirs(CACHE_DIR)
+                        st.success("🗑️ Весь кеш очищен! Данные будут пересчитаны.")
+                    except Exception as e:
+                        st.warning(f"⚠️ Ошибка очистки: {e}")
+                        st.success("✅ Session кеш очищен!")
+                    
+                    st.rerun()
+            
+            with col_nav4:
+                cache_size = len(st.session_state.abc_cache) if 'abc_cache' in st.session_state else 0
+                st.info(f"💾 Кеш: {cache_size} уровней")
+            
+            # Заголовок текущего уровня
+            if breadcrumbs:
+                current_level_name = " → ".join(breadcrumbs)
+                st.subheader(f"📊 ABC анализ: {current_level_name}")
+            else:
+                st.subheader("📊 ABC анализ: Основные категории")
             
             # Метрики ABC
-            if level == 0:  # Показываем метрики только на корневом уровне
-                a_items = [item for item in abc_data if item['abc'] == 'A']
-                b_items = [item for item in abc_data if item['abc'] == 'B']
-                c_items = [item for item in abc_data if item['abc'] == 'C']
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("🅰️ Группа A", f"{len(a_items)}", 
-                             f"{sum(item['percent'] for item in a_items):.1f}% выручки")
-                with col2:
-                    st.metric("🅱️ Группа B", f"{len(b_items)}", 
-                             f"{sum(item['percent'] for item in b_items):.1f}% выручки")
-                with col3:
-                    st.metric("🅾️ Группа C", f"{len(c_items)}", 
-                             f"{sum(item['percent'] for item in c_items):.1f}% выручки")
+            col1, col2, col3 = st.columns(3)
             
-            # Показываем данные в табличном виде
-            if level == 0:
-                st.subheader("📋 Категории верхнего уровня")
-            else:
-                st.subheader(f"📋 Подкатегории (уровень {level + 1})")
+            a_categories = abc_categories[abc_categories['ABC'] == 'A']
+            b_categories = abc_categories[abc_categories['ABC'] == 'B'] 
+            c_categories = abc_categories[abc_categories['ABC'] == 'C']
             
-            # Создаем DataFrame для таблицы
-            table_data = []
-            for item in abc_data[:20]:  # Ограничиваем количество
-                table_data.append({
-                    'Категория': item['name'][:50],
-                    'ABC': item['abc'],
-                    'Выручка': f"{item['total_amount']:,.0f} ₸",
-                    'Количество': f"{item['total_quantity']:,.0f}",
-                    'Доля %': f"{item['percent']:.1f}%",
-                    'Товаров': item['items_count'],
-                    'Есть подкатегории': '✅' if item['has_children'] else '❌'
-                })
-            
-            # Отображаем таблицу
-            if table_data:
-                df_table = pd.DataFrame(table_data)
-                
-                # Стилизуем таблицу по ABC
-                def style_abc(row):
-                    if row['ABC'] == 'A':
-                        return ['background-color: #d4edda'] * len(row)
-                    elif row['ABC'] == 'B':
-                        return ['background-color: #fff3cd'] * len(row)
-                    else:
-                        return ['background-color: #f8d7da'] * len(row)
-                
-                styled_df = df_table.style.apply(style_abc, axis=1)
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
-                
-                # Добавляем возможность перехода на следующий уровень
-                st.subheader("🔍 Детальный просмотр")
-                
-                category_names = [item['name'] for item in abc_data if item['has_children']]
-                if category_names:
-                    selected_category = st.selectbox(
-                        "Выберите категорию для детального просмотра:",
-                        options=[''] + category_names,
-                        key=f"category_select_level_{level}"
-                    )
-                    
-                    if selected_category:
-                        st.write(f"**Переход в категорию: {selected_category}**")
-                        if selected_category in tree:
-                            render_category_level(tree[selected_category]['children'], level + 1, f"{parent_path}/{selected_category}" if parent_path else selected_category)
-                
-                # Показываем товары в выбранной категории
-                product_category_names = [item['name'] for item in abc_data]
-                if product_category_names:
-                    selected_product_category = st.selectbox(
-                        "Показать товары в категории:",
-                        options=[''] + product_category_names,
-                        key=f"product_select_level_{level}"
-                    )
-                    
-                    if selected_product_category and selected_product_category in tree:
-                        items = tree[selected_product_category]['items']
-                        if items:
-                            st.subheader(f"🛍️ Товары в категории '{selected_product_category}'")
-                            
-                            # Создаем таблицу товаров
-                            product_data = []
-                            sorted_items = sorted(items, key=lambda x: x['amount'], reverse=True)[:50]  # Топ-50 товаров
-                            
-                            for i, product in enumerate(sorted_items):
-                                # Простая ABC для товаров
-                                if i < len(sorted_items) * 0.2:  # Топ 20%
-                                    abc_class = 'A'
-                                elif i < len(sorted_items) * 0.5:  # Следующие 30%
-                                    abc_class = 'B'
-                                else:
-                                    abc_class = 'C'
-                                
-                                product_data.append({
-                                    'Артикул': product['item_code'],
-                                    'Наименование': product['item_name'][:40],
-                                    'ABC': abc_class,
-                                    'Выручка': f"{product['amount']:,.0f} ₸",
-                                    'Количество': f"{product['quantity']:,.0f}",
-                                    'Филиал': product['branch']
-                                })
-                            
-                            if product_data:
-                                df_products = pd.DataFrame(product_data)
-                                
-                                def style_product_abc(row):
-                                    if row['ABC'] == 'A':
-                                        return ['background-color: #d4edda'] * len(row)
-                                    elif row['ABC'] == 'B':
-                                        return ['background-color: #fff3cd'] * len(row)
-                                    else:
-                                        return ['background-color: #f8d7da'] * len(row)
-                                
-                                styled_products = df_products.style.apply(style_product_abc, axis=1)
-                                st.dataframe(styled_products, use_container_width=True, hide_index=True)
-                
-                with st.container():
-                    # Основная строка категории
-                    col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
-                    
-                    with col1:
-                        # Кнопка раскрытия/сворачивания
-                        is_expanded = expanded_key in st.session_state.expanded_categories
-                        expand_symbol = "▼" if is_expanded else "▶"
-                        
-                        if item['has_children']:
-                            if st.button(f"{indent}{expand_symbol} {icon} {item['name'][:50]}", 
-                                       key=f"expand_{expanded_key}_{idx}",
-                                       help="Нажмите для раскрытия подкатегорий"):
-                                if is_expanded:
-                                    st.session_state.expanded_categories.remove(expanded_key)
-                                else:
-                                    st.session_state.expanded_categories.add(expanded_key)
-                                st.rerun()
-                        else:
-                            st.write(f"{indent}{icon} {item['name'][:50]}")
-                    
-                    with col2:
-                        st.markdown(f"<div style='background-color: {bg_color}; padding: 5px; border-radius: 3px; text-align: center;'><b>{item['abc']}</b></div>", unsafe_allow_html=True)
-                    
-                    with col3:
-                        st.write(f"{item['total_amount']:,.0f} ₸")
-                    
-                    with col4:
-                        st.write(f"{item['total_quantity']:,.0f}")
-                    
-                    with col5:
-                        st.write(f"{item['percent']:.1f}%")
-                
-                # Если категория раскрыта, показываем подкатегории
-                if expanded_key in st.session_state.expanded_categories and item['has_children']:
-                    category_name = item['name']
-                    if category_name in tree:
-                        render_category_level(tree[category_name]['children'], level + 1, item['path'])
-                
-                # Если у категории есть товары и она раскрыта, показываем товары (максимум 5)
-                if expanded_key in st.session_state.expanded_categories:
-                    category_name = item['name']
-                    if category_name in tree:
-                        items = tree[category_name]['items']
-                        if items and not tree[category_name]['children']:
-                            # Быстрый показ топ-5 товаров без полного ABC
-                            items_sample = sorted(items, key=lambda x: x['amount'], reverse=True)[:5]
-                            
-                            for i, product_row in enumerate(items_sample):
-                                pcol1, pcol2, pcol3, pcol4, pcol5 = st.columns([3, 1, 1, 1, 1])
-                                
-                                product_indent = "　" * (level + 1)
-                                
-                                # Простая ABC для товара
-                                if i == 0:
-                                    abc_class = 'A'
-                                    pbg_color = '#d4edda'
-                                elif i <= 2:
-                                    abc_class = 'B'
-                                    pbg_color = '#fff3cd'
-                                else:
-                                    abc_class = 'C'
-                                    pbg_color = '#f8d7da'
-                                
-                                with pcol1:
-                                    product_name = f"{product_row['item_code']} - {product_row['item_name'][:30]}"
-                                    st.write(f"{product_indent}🛍️ {product_name}")
-                                with pcol2:
-                                    st.markdown(f"<div style='background-color: {pbg_color}; padding: 3px; border-radius: 3px; text-align: center; font-size: 0.8em;'>{abc_class}</div>", unsafe_allow_html=True)
-                                with pcol3:
-                                    st.write(f"{product_row['amount']:,.0f} ₸")
-                                with pcol4:
-                                    st.write(f"{product_row['quantity']:,.0f}")
-                                with pcol5:
-                                    st.write("-")
-            
-            # Показываем если есть еще категории
-            if len(abc_data) > 20:
-                st.info(f"... и еще {len(abc_data) - 20} категорий (показаны топ-20 для скорости)")
-        
-        # Строим дерево категорий
-        category_tree = build_category_tree(sales_data)
-        
-        if category_tree:
-            st.subheader("📊 Иерархический ABC анализ")
-            st.info("💡 Нажмите на ▶ для раскрытия категории и просмотра подкатегорий")
-            
-            # Заголовки таблицы
-            col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
             with col1:
-                st.write("**Категория**")
+                st.metric("🅰️ Группа A", f"{len(a_categories)}",
+                         f"{a_categories['percentage'].sum():.1f}% выручки")
             with col2:
-                st.write("**ABC**")
+                st.metric("🅱️ Группа B", f"{len(b_categories)}",
+                         f"{b_categories['percentage'].sum():.1f}% выручки")
             with col3:
-                st.write("**Выручка**")
-            with col4:
-                st.write("**Количество**")
-            with col5:
-                st.write("**% выручки**")
+                st.metric("🅾️ Группа C", f"{len(c_categories)}",
+                         f"{c_categories['percentage'].sum():.1f}% выручки")
             
-            st.markdown("---")
-            
-            # Рендерим дерево
-            render_category_level(category_tree)
-            
-            # Кнопки управления
+            # Графики
             col1, col2 = st.columns(2)
+            
             with col1:
-                if st.button("📂 Раскрыть все категории"):
-                    # Собираем все возможные ключи
-                    def collect_all_keys(tree, level=0, parent_path=""):
-                        keys = []
-                        for name, data in tree.items():
-                            path = parent_path + "/" + name if parent_path else name
-                            key = f"{path}_level_{level}"
-                            keys.append(key)
-                            if data['children']:
-                                keys.extend(collect_all_keys(data['children'], level + 1, path))
-                        return keys
-                    
-                    all_keys = collect_all_keys(category_tree)
-                    st.session_state.expanded_categories = set(all_keys)
-                    st.rerun()
+                # Круговая диаграмма распределения по ABC
+                abc_summary = abc_categories.groupby('ABC')['amount'].sum().reset_index()
+                
+                fig_abc = px.pie(
+                    abc_summary,
+                    values='amount',
+                    names='ABC',
+                    title='Распределение выручки по ABC группам',
+                    color='ABC',
+                    color_discrete_map={'A': '#28a745', 'B': '#ffc107', 'C': '#dc3545'}
+                )
+                st.plotly_chart(fig_abc, use_container_width=True)
             
             with col2:
-                if st.button("📁 Свернуть все категории"):
-                    st.session_state.expanded_categories = set()
-                    st.rerun()
+                # Столбчатая диаграмма топ-10 категорий
+                top_categories = abc_categories.head(10)
+                
+                fig_top = px.bar(
+                    top_categories,
+                    x='amount',
+                    y='category',
+                    title='Топ-10 категорий по выручке',
+                    orientation='h',
+                    color='ABC',
+                    color_discrete_map={'A': '#28a745', 'B': '#ffc107', 'C': '#dc3545'}
+                )
+                fig_top.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_top, use_container_width=True)
+            
+            # Удобная таблица с навигацией
+            st.subheader("📊 ABC анализ - таблица данных")
+            
+            # Подготавливаем данные для таблицы
+            display_data = abc_categories.copy()
+            
+            # Добавляем кнопки навигации для категорий с детьми
+            if not display_data.empty:
+                # Показываем кнопки навигации только для категорий с детьми
+                has_navigable_categories = display_data['has_children'].any()
+                
+                if has_navigable_categories:
+                    st.write("**🧭 Навигация по категориям:**")
+                    
+                    # Создаем кнопки для всех категорий с детьми
+                    nav_cols = st.columns(min(4, len(display_data[display_data['has_children'] == True])))
+                    nav_col_idx = 0
+                    
+                    for idx, row in display_data.iterrows():
+                        if row.get('has_children', False):
+                            safe_category = str(row['category']).replace(' ', '_').replace('/', '_')
+                            button_key = f"nav_{safe_category}_{len(st.session_state.abc_current_path)}_{idx}"
+                            
+                            with nav_cols[nav_col_idx % len(nav_cols)]:
+                                if st.button(f"➡️ {row['category']}", key=button_key):
+                                    st.session_state.abc_current_path.append(row['category'])
+                                    st.rerun()
+                            
+                            nav_col_idx += 1
+                    
+                    st.write("---")  # Разделитель
+                
+                # Форматируем данные для показа
+                # Сначала выбираем только нужные колонки в правильном порядке
+                needed_columns = ['category', 'amount', 'quantity', 'percentage', 'cumulative_percentage', 'ABC']
+                
+                # Проверяем наличие всех нужных колонок
+                available_columns = []
+                for col in needed_columns:
+                    if col in display_data.columns:
+                        available_columns.append(col)
+                
+                # Выбираем только доступные колонки
+                if available_columns:
+                    display_data = display_data[available_columns]
+                
+                # Переименовываем колонки
+                column_mapping = {
+                    'category': 'Категория/Товар',
+                    'amount': 'Выручка (₸)',
+                    'quantity': 'Количество',
+                    'percentage': '% выручки',
+                    'cumulative_percentage': '% накопительный',
+                    'ABC': 'ABC группа'
+                }
+                
+                display_data = display_data.rename(columns=column_mapping)
+                
+                # Форматируем числа (с проверкой типов и наличия колонок)
+                if 'Выручка (₸)' in display_data.columns:
+                    display_data['Выручка (₸)'] = display_data['Выручка (₸)'].apply(
+                        lambda x: f"{float(x):,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else str(x)
+                    )
+                
+                if 'Количество' in display_data.columns:
+                    display_data['Количество'] = display_data['Количество'].apply(
+                        lambda x: f"{float(x):,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else str(x)
+                    )
+                
+                if '% выручки' in display_data.columns:
+                    display_data['% выручки'] = display_data['% выручки'].apply(
+                        lambda x: f"{float(x):.2f}%" if pd.notnull(x) and isinstance(x, (int, float)) else str(x)
+                    )
+                
+                if '% накопительный' in display_data.columns:
+                    display_data['% накопительный'] = display_data['% накопительный'].apply(
+                        lambda x: f"{float(x):.1f}%" if pd.notnull(x) and isinstance(x, (int, float)) else str(x)
+                    )
+                
+                # Показываем таблицу
+                st.dataframe(
+                    display_data, 
+                    hide_index=True, 
+                    height=min(600, len(display_data) * 35 + 100),
+                    use_container_width=True
+                )
+                
+                # Информация о количестве элементов
+                current_path_str = ' → '.join(st.session_state.abc_current_path) if st.session_state.abc_current_path else 'Корень'
+                st.info(f"📊 Показано {len(abc_categories)} элементов на уровне: **{current_path_str}**")
+                
+                # Статистика по ABC группам
+                abc_stats = abc_categories.groupby('ABC').agg({
+                    'amount': 'sum',
+                    'quantity': 'sum',
+                    'category': 'count'
+                }).reset_index()
+                
+                st.subheader("📈 Статистика по ABC группам")
+                col1, col2, col3 = st.columns(3)
+                
+                for idx, stat_row in abc_stats.iterrows():
+                    abc_group = stat_row['ABC']
+                    count = stat_row['category']
+                    amount = stat_row['amount']
+                    
+                    if idx == 0:
+                        with col1:
+                            st.metric(f"🅰️ Группа {abc_group}", f"{count} элементов", f"{amount:,.0f} ₸")
+                    elif idx == 1:
+                        with col2:
+                            st.metric(f"🅱️ Группа {abc_group}", f"{count} элементов", f"{amount:,.0f} ₸")
+                    else:
+                        with col3:
+                            st.metric(f"🅾️ Группа {abc_group}", f"{count} элементов", f"{amount:,.0f} ₸")
+            
+            # Экспорт
+            csv = abc_categories.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 Скачать ABC анализ категорий",
+                data=csv,
+                file_name=f"abc_categories_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
         else:
-            st.warning("⚠️ Нет данных о путях категорий для анализа")
-    
+            st.warning("⚠️ Нет данных о категориях для ABC анализа")
+        
     elif not sales_data.empty:
         # Fallback на старый метод если нет category_path
         category_abc = calculate_abc_by_categories(sales_data, stock_data)
@@ -1402,35 +1322,21 @@ with tab5:
             how='outer'
         ).fillna(0)
         
-        # Добавляем города и иерархическую информацию
+        # Добавляем города
         movement_data['city'] = movement_data['branch'].apply(get_city_from_branch)
-        movement_data['warehouse_level'] = movement_data['branch'].apply(get_warehouse_level)
-        movement_data['warehouse_type'] = movement_data['branch'].apply(get_warehouse_type)
-        movement_data['parent_warehouse'] = movement_data['branch'].apply(get_parent_warehouse)
         
-        # Рассчитываем среднедневные продажи с учетом иерархии
+        # Рассчитываем среднедневные продажи и дни до истощения
         movement_data['daily_sales'] = movement_data['quantity'] / 30.5  # За месяц
-        
-        # Рассчитываем нормативы MIN/MAX с учетом типа склада
-        movement_data['min_stock'] = movement_data.apply(
-            lambda row: calculate_stock_requirements(row['daily_sales'], row['branch'])[0], axis=1
-        )
-        movement_data['max_stock'] = movement_data.apply(
-            lambda row: calculate_stock_requirements(row['daily_sales'], row['branch'])[1], axis=1
-        )
-        
         movement_data['days_until_empty'] = np.where(
             movement_data['daily_sales'] > 0,
-            movement_data['stock_quantity'] / movement_data['daily_sales'],
+            (movement_data['stock_quantity'] / movement_data['daily_sales']) * 30.5,
             999999
         )
         
-        # Рассчитываем потребность в перемещениях с учетом иерархии
-        movement_data['needs_stock'] = movement_data['stock_quantity'] < movement_data['min_stock']
-        movement_data['has_excess'] = movement_data['stock_quantity'] > movement_data['max_stock']
-        movement_data['in_norm'] = (~movement_data['needs_stock']) & (~movement_data['has_excess'])
-        movement_data['deficit_amount'] = np.maximum(0, movement_data['min_stock'] - movement_data['stock_quantity'])
-        movement_data['excess_amount'] = np.maximum(0, movement_data['stock_quantity'] - movement_data['max_stock'])
+        # Рассчитываем потребность в перемещениях
+        movement_data['needs_stock'] = (movement_data['daily_sales'] > 0) & (movement_data['days_until_empty'] < 30)
+        movement_data['has_excess'] = (movement_data['daily_sales'] == 0) & (movement_data['stock_quantity'] > 0)
+        movement_data['excess_ratio'] = movement_data['stock_quantity'] / (movement_data['daily_sales'] + 0.001)
         
         if not movement_data.empty:
             # Метрики перемещений
@@ -1492,107 +1398,8 @@ with tab5:
                 )
                 st.plotly_chart(fig_excess, use_container_width=True)
             
-            # Анализ по уровням иерархии
-            st.subheader("🏗️ Анализ по уровням иерархии складов")
-            
-            # Группировка по уровням и типам складов
-            hierarchy_analysis = movement_data.groupby(['warehouse_level', 'warehouse_type']).agg({
-                'needs_stock': 'sum',
-                'has_excess': 'sum', 
-                'in_norm': 'sum',
-                'deficit_amount': 'sum',
-                'excess_amount': 'sum',
-                'stock_quantity': 'sum'
-            }).reset_index()
-            
-            # Добавляем описания уровней
-            level_descriptions = {
-                1: "Уровень 1 - Главный хаб",
-                2: "Уровень 2 - Склады и магазины от хаба", 
-                3: "Уровень 3 - Магазины от складов"
-            }
-            hierarchy_analysis['level_description'] = hierarchy_analysis['warehouse_level'].map(level_descriptions)
-            hierarchy_analysis = hierarchy_analysis.sort_values('warehouse_level')
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # График по уровням
-                fig_hierarchy = px.bar(
-                    hierarchy_analysis,
-                    x='level_description',
-                    y=['needs_stock', 'has_excess', 'in_norm'],
-                    title='Статус товаров по уровням иерархии',
-                    labels={'value': 'Количество позиций', 'level_description': 'Уровень иерархии'},
-                    color_discrete_map={
-                        'needs_stock': '#ff4444',
-                        'has_excess': '#44ff44', 
-                        'in_norm': '#4444ff'
-                    }
-                )
-                st.plotly_chart(fig_hierarchy, use_container_width=True)
-            
-            with col2:
-                # Таблица статистики по иерархии
-                st.write("**Статистика по уровням:**")
-                for _, row in hierarchy_analysis.iterrows():
-                    total_items = row['needs_stock'] + row['has_excess'] + row['in_norm']
-                    if total_items > 0:
-                        st.write(f"**{row['level_description']} ({row['warehouse_type']})**")
-                        st.write(f"- 🔴 Дефицит: {row['needs_stock']} позиций ({row['deficit_amount']:.0f} ед.)")
-                        st.write(f"- 🟢 Избыток: {row['has_excess']} позиций ({row['excess_amount']:.0f} ед.)")
-                        st.write(f"- 🔵 В норме: {row['in_norm']} позиций")
-                        st.write(f"- 📊 Всего остатков: {row['stock_quantity']:.0f} ед.")
-                        st.write("---")
-            
-            # Конкретные рекомендации по перемещениям с учетом иерархии
-            st.subheader("📋 Иерархические рекомендации по перемещениям")
-            
-            st.info("💡 **Правила перемещений по иерархии:**\n"
-                   "- При дефиците → получить от родительского склада\n"
-                   "- При избытке → отдать в родительский склад или распределить дочерним\n" 
-                   "- Хаб может перераспределять между всеми подчиненными")
-            
-            # Генерируем рекомендации по иерархии
-            hierarchy_recommendations = []
-            
-            for _, row in movement_data.iterrows():
-                if row['needs_stock'] and row['deficit_amount'] > 5:
-                    # Дефицит - нужно получить от родителя
-                    parent = row['parent_warehouse']
-                    if parent:
-                        hierarchy_recommendations.append({
-                            'Тип': '📥 Получить',
-                            'Товар': row['item_name'],
-                            'От склада': parent,
-                            'К складу': row['branch'],
-                            'Количество': f"{row['deficit_amount']:.0f}",
-                            'Причина': f"Дефицит (осталось {row['days_until_empty']:.1f} дней)",
-                            'Приоритет': 'Высокий' if row['days_until_empty'] < 7 else 'Средний'
-                        })
-                
-                elif row['has_excess'] and row['excess_amount'] > 10:
-                    # Избыток - нужно отдать родителю
-                    parent = row['parent_warehouse']
-                    if parent:
-                        hierarchy_recommendations.append({
-                            'Тип': '📤 Отдать',
-                            'Товар': row['item_name'],
-                            'От склада': row['branch'],
-                            'К складу': parent,
-                            'Количество': f"{row['excess_amount']:.0f}",
-                            'Причина': f"Избыток (запас на {row['days_until_empty']:.0f} дней)",
-                            'Приоритет': 'Низкий'
-                        })
-            
-            if hierarchy_recommendations:
-                df_recommendations = pd.DataFrame(hierarchy_recommendations)
-                st.dataframe(df_recommendations, use_container_width=True)
-            else:
-                st.info("Нет рекомендаций для перемещений по иерархии")
-            
             # Конкретные рекомендации по перемещениям
-            st.subheader("📋 Общие рекомендации по перемещениям")
+            st.subheader("📋 Рекомендации по перемещениям")
             
             # Фильтры для рекомендаций
             col1, col2 = st.columns(2)

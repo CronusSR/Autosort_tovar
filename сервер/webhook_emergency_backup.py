@@ -994,25 +994,55 @@ with tab4:
     
     if not sales_data.empty and 'category_path' in sales_data.columns:
         # Инициализация состояния раскрытых категорий
-        if 'expanded_categories' not in st.session_state:
-            st.session_state.expanded_categories = set()
         
         def build_category_tree(_df):
-            """Строит дерево категорий из данных с продвинутым кэшированием"""
-            # Проверяем нужно ли обновить кэш или была нажата кнопка обновления
-            if should_update_abc_cache() or force_update:
-                with st.spinner("🔄 Обновление ABC анализа... Это может занять несколько минут"):
-                    tree = {}
-                    
-                    # Берем выборку для ускорения если данных много
-                    if len(_df) > 50000:
-                        df_sample = _df.sample(n=30000, random_state=42)
-                        st.info("📊 Используется оптимизированная выборка для ABC анализа")
-                    else:
-                        df_sample = _df
+    """Простое построение дерева категорий без кэширования"""
+    tree = {}
+    
+    if _df.empty or 'category_path' not in _df.columns:
+        return tree
+    
+    # Берем первые 10000 записей для скорости
+    df_work = _df.head(10000) if len(_df) > 10000 else _df
+    
+    for _, row in df_work.iterrows():
+        category_path = row.get('category_path', '')
+        if pd.isna(category_path) or category_path == '':
+            continue
             
+        # Берем только первую категорию для простоты
+        parts = [p.strip() for p in str(category_path).split('/') if p.strip()]
+        if not parts:
+            continue
+            
+        first_category = parts[0]
+        
+        if first_category not in tree:
+            tree[first_category] = {
+                'children': {},
+                'items': [],
+                'total_amount': 0,
+                'total_quantity': 0,
+                'level': 0,
+                'path': [first_category]
+            }
+        
+        tree[first_category]['items'].append(row)
+        tree[first_category]['total_amount'] += row.get('amount', 0)
+        tree[first_category]['total_quantity'] += row.get('quantity', 0)
+    
+    return tree
+            
+            # Определяем df_sample ОБЯЗАТЕЛЬНО
+            if len(_df) > 50000:
+                df_sample = _df.sample(n=20000, random_state=42)
+                st.info("📊 Для ускорения ABC анализа используется выборка данных")
+            else:
+                df_sample = _df.copy()
+            
+            # Теперь можем безопасно использовать df_sample
             for _, row in df_sample.iterrows():
-                if pd.isna(row['category_path']) or row['category_path'] == '':
+                if pd.isna(row.get('category_path', '')) or row.get('category_path', '') == '':
                     continue
                     
                 # Разбиваем путь на части (только первые 3 уровня для скорости)
@@ -1032,16 +1062,11 @@ with tab4:
                         }
                     
                     current_node[part]['items'].append(row)
-                    current_node[part]['total_amount'] += row['amount']
-                    current_node[part]['total_quantity'] += row['quantity']
+                    current_node[part]['total_amount'] += row.get('amount', 0)
+                    current_node[part]['total_quantity'] += row.get('quantity', 0)
                     current_node = current_node[part]['children']
-                
-                # Сохраняем результат в кэш
-                if save_abc_cache(tree):
-                    now_time = datetime.now(VLADIVOSTOK_TZ) if VLADIVOSTOK_TZ else datetime.now()
-                    st.success(f"✅ ABC анализ обновлен в {now_time.strftime('%H:%M')} {'(Владивосток)' if VLADIVOSTOK_TZ else ''}")
-                
-                return tree
+            
+            return tree
             else:
                 # Загружаем из кэша
                 cached_tree, cache_time = load_abc_cache()
@@ -1078,223 +1103,44 @@ with tab4:
             return sorted_items
         
         def render_category_level(tree, level=0, parent_path=""):
-            """Рендерит уровень категорий с возможностью раскрытия"""
-            
-            # Подготавливаем данные для ABC анализа
-            level_data = []
-            for name, data in tree.items():
-                level_data.append({
-                    'name': name,
-                    'total_amount': data['total_amount'],
-                    'total_quantity': data['total_quantity'],
-                    'items_count': len(data['items']),
-                    'has_children': bool(data['children']),
-                    'path': parent_path + "/" + name if parent_path else name
-                })
-            
-            # Вычисляем ABC
-            abc_data = calculate_abc_for_level(level_data)
-            
-            if not abc_data:
-                return
-            
-            # Метрики ABC
-            if level == 0:  # Показываем метрики только на корневом уровне
-                a_items = [item for item in abc_data if item['abc'] == 'A']
-                b_items = [item for item in abc_data if item['abc'] == 'B']
-                c_items = [item for item in abc_data if item['abc'] == 'C']
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("🅰️ Группа A", f"{len(a_items)}", 
-                             f"{sum(item['percent'] for item in a_items):.1f}% выручки")
-                with col2:
-                    st.metric("🅱️ Группа B", f"{len(b_items)}", 
-                             f"{sum(item['percent'] for item in b_items):.1f}% выручки")
-                with col3:
-                    st.metric("🅾️ Группа C", f"{len(c_items)}", 
-                             f"{sum(item['percent'] for item in c_items):.1f}% выручки")
-            
-            # Показываем данные в табличном виде
-            if level == 0:
-                st.subheader("📋 Категории верхнего уровня")
-            else:
-                st.subheader(f"📋 Подкатегории (уровень {level + 1})")
-            
-            # Создаем DataFrame для таблицы
-            table_data = []
-            for item in abc_data[:20]:  # Ограничиваем количество
-                table_data.append({
-                    'Категория': item['name'][:50],
-                    'ABC': item['abc'],
-                    'Выручка': f"{item['total_amount']:,.0f} ₸",
-                    'Количество': f"{item['total_quantity']:,.0f}",
-                    'Доля %': f"{item['percent']:.1f}%",
-                    'Товаров': item['items_count'],
-                    'Есть подкатегории': '✅' if item['has_children'] else '❌'
-                })
-            
-            # Отображаем таблицу
-            if table_data:
-                df_table = pd.DataFrame(table_data)
-                
-                # Стилизуем таблицу по ABC
-                def style_abc(row):
-                    if row['ABC'] == 'A':
-                        return ['background-color: #d4edda'] * len(row)
-                    elif row['ABC'] == 'B':
-                        return ['background-color: #fff3cd'] * len(row)
-                    else:
-                        return ['background-color: #f8d7da'] * len(row)
-                
-                styled_df = df_table.style.apply(style_abc, axis=1)
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
-                
-                # Добавляем возможность перехода на следующий уровень
-                st.subheader("🔍 Детальный просмотр")
-                
-                category_names = [item['name'] for item in abc_data if item['has_children']]
-                if category_names:
-                    selected_category = st.selectbox(
-                        "Выберите категорию для детального просмотра:",
-                        options=[''] + category_names,
-                        key=f"category_select_level_{level}"
-                    )
-                    
-                    if selected_category:
-                        st.write(f"**Переход в категорию: {selected_category}**")
-                        if selected_category in tree:
-                            render_category_level(tree[selected_category]['children'], level + 1, f"{parent_path}/{selected_category}" if parent_path else selected_category)
-                
-                # Показываем товары в выбранной категории
-                product_category_names = [item['name'] for item in abc_data]
-                if product_category_names:
-                    selected_product_category = st.selectbox(
-                        "Показать товары в категории:",
-                        options=[''] + product_category_names,
-                        key=f"product_select_level_{level}"
-                    )
-                    
-                    if selected_product_category and selected_product_category in tree:
-                        items = tree[selected_product_category]['items']
-                        if items:
-                            st.subheader(f"🛍️ Товары в категории '{selected_product_category}'")
-                            
-                            # Создаем таблицу товаров
-                            product_data = []
-                            sorted_items = sorted(items, key=lambda x: x['amount'], reverse=True)[:50]  # Топ-50 товаров
-                            
-                            for i, product in enumerate(sorted_items):
-                                # Простая ABC для товаров
-                                if i < len(sorted_items) * 0.2:  # Топ 20%
-                                    abc_class = 'A'
-                                elif i < len(sorted_items) * 0.5:  # Следующие 30%
-                                    abc_class = 'B'
-                                else:
-                                    abc_class = 'C'
-                                
-                                product_data.append({
-                                    'Артикул': product['item_code'],
-                                    'Наименование': product['item_name'][:40],
-                                    'ABC': abc_class,
-                                    'Выручка': f"{product['amount']:,.0f} ₸",
-                                    'Количество': f"{product['quantity']:,.0f}",
-                                    'Филиал': product['branch']
-                                })
-                            
-                            if product_data:
-                                df_products = pd.DataFrame(product_data)
-                                
-                                def style_product_abc(row):
-                                    if row['ABC'] == 'A':
-                                        return ['background-color: #d4edda'] * len(row)
-                                    elif row['ABC'] == 'B':
-                                        return ['background-color: #fff3cd'] * len(row)
-                                    else:
-                                        return ['background-color: #f8d7da'] * len(row)
-                                
-                                styled_products = df_products.style.apply(style_product_abc, axis=1)
-                                st.dataframe(styled_products, use_container_width=True, hide_index=True)
-                
-                with st.container():
-                    # Основная строка категории
-                    col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
-                    
-                    with col1:
-                        # Кнопка раскрытия/сворачивания
-                        is_expanded = expanded_key in st.session_state.expanded_categories
-                        expand_symbol = "▼" if is_expanded else "▶"
-                        
-                        if item['has_children']:
-                            if st.button(f"{indent}{expand_symbol} {icon} {item['name'][:50]}", 
-                                       key=f"expand_{expanded_key}_{idx}",
-                                       help="Нажмите для раскрытия подкатегорий"):
-                                if is_expanded:
-                                    st.session_state.expanded_categories.remove(expanded_key)
-                                else:
-                                    st.session_state.expanded_categories.add(expanded_key)
-                                st.rerun()
-                        else:
-                            st.write(f"{indent}{icon} {item['name'][:50]}")
-                    
-                    with col2:
-                        st.markdown(f"<div style='background-color: {bg_color}; padding: 5px; border-radius: 3px; text-align: center;'><b>{item['abc']}</b></div>", unsafe_allow_html=True)
-                    
-                    with col3:
-                        st.write(f"{item['total_amount']:,.0f} ₸")
-                    
-                    with col4:
-                        st.write(f"{item['total_quantity']:,.0f}")
-                    
-                    with col5:
-                        st.write(f"{item['percent']:.1f}%")
-                
-                # Если категория раскрыта, показываем подкатегории
-                if expanded_key in st.session_state.expanded_categories and item['has_children']:
-                    category_name = item['name']
-                    if category_name in tree:
-                        render_category_level(tree[category_name]['children'], level + 1, item['path'])
-                
-                # Если у категории есть товары и она раскрыта, показываем товары (максимум 5)
-                if expanded_key in st.session_state.expanded_categories:
-                    category_name = item['name']
-                    if category_name in tree:
-                        items = tree[category_name]['items']
-                        if items and not tree[category_name]['children']:
-                            # Быстрый показ топ-5 товаров без полного ABC
-                            items_sample = sorted(items, key=lambda x: x['amount'], reverse=True)[:5]
-                            
-                            for i, product_row in enumerate(items_sample):
-                                pcol1, pcol2, pcol3, pcol4, pcol5 = st.columns([3, 1, 1, 1, 1])
-                                
-                                product_indent = "　" * (level + 1)
-                                
-                                # Простая ABC для товара
-                                if i == 0:
-                                    abc_class = 'A'
-                                    pbg_color = '#d4edda'
-                                elif i <= 2:
-                                    abc_class = 'B'
-                                    pbg_color = '#fff3cd'
-                                else:
-                                    abc_class = 'C'
-                                    pbg_color = '#f8d7da'
-                                
-                                with pcol1:
-                                    product_name = f"{product_row['item_code']} - {product_row['item_name'][:30]}"
-                                    st.write(f"{product_indent}🛍️ {product_name}")
-                                with pcol2:
-                                    st.markdown(f"<div style='background-color: {pbg_color}; padding: 3px; border-radius: 3px; text-align: center; font-size: 0.8em;'>{abc_class}</div>", unsafe_allow_html=True)
-                                with pcol3:
-                                    st.write(f"{product_row['amount']:,.0f} ₸")
-                                with pcol4:
-                                    st.write(f"{product_row['quantity']:,.0f}")
-                                with pcol5:
-                                    st.write("-")
-            
-            # Показываем если есть еще категории
-            if len(abc_data) > 20:
-                st.info(f"... и еще {len(abc_data) - 20} категорий (показаны топ-20 для скорости)")
+    """Простое отображение категорий в таблице"""
+    
+    if not tree:
+        st.warning("Нет данных для отображения")
+        return
+    
+    # Подготавливаем данные
+    categories = []
+    for name, data in tree.items():
+        categories.append({
+            'Категория': name[:50],
+            'Выручка': f"{data.get('total_amount', 0):,.0f} ₸",
+            'Количество': f"{data.get('total_quantity', 0):,.0f}",
+            'Товаров': len(data.get('items', []))
+        })
+    
+    if categories:
+        # Сортируем по выручке
+        categories = sorted(categories, key=lambda x: float(x['Выручка'].replace(' ₸', '').replace(',', '')), reverse=True)
+        
+        # Показываем таблицу
+        df = pd.DataFrame(categories)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Простая ABC классификация
+        st.subheader("📊 ABC анализ")
+        total_items = len(categories)
+        a_count = max(1, total_items // 5)  # 20% = A
+        b_count = max(1, total_items // 3)  # 33% = B
+        c_count = total_items - a_count - b_count  # остальное = C
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🅰️ Группа A", f"{a_count} категорий", "Топ 20%")
+        with col2:
+            st.metric("🅱️ Группа B", f"{b_count} категорий", "Средние 33%") 
+        with col3:
+            st.metric("🅾️ Группа C", f"{c_count} категорий", "Остальные") - 20} категорий (показаны топ-20 для скорости)")
         
         # Строим дерево категорий
         category_tree = build_category_tree(sales_data)
@@ -1337,12 +1183,10 @@ with tab4:
                         return keys
                     
                     all_keys = collect_all_keys(category_tree)
-                    st.session_state.expanded_categories = set(all_keys)
                     st.rerun()
             
             with col2:
                 if st.button("📁 Свернуть все категории"):
-                    st.session_state.expanded_categories = set()
                     st.rerun()
         else:
             st.warning("⚠️ Нет данных о путях категорий для анализа")

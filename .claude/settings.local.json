@@ -61,7 +61,16 @@
       "Bash(\"/mnt/f/Работа-Никита/Autosort_tovar/fix_warehouse_hierarchy.sh\")",
       "Bash(\"/mnt/f/Работа-Никита/Autosort_tovar/diagnose_turnover_calculation.sh\")",
       "Bash(\"/mnt/f/Работа-Никита/Autosort_tovar/fix_turnover_calculation_final.sh\")",
-      "Bash(\"/mnt/f/Работа-Никита/Autosort_tovar/upload_fixed_turnover.sh\")"
+      "Bash(\"/mnt/f/Работа-Никита/Autosort_tovar/upload_fixed_turnover.sh\")",
+      "Bash(timeout 30 scp /mnt/f/Работа-Никита/Autosort_tovar/hierarchical_movement_system.py root@185.251.91.239:/opt/inventory_system/)",
+      "Bash(bash:*)",
+      "Bash(./update_webhook_structure.sh:*)",
+      "Bash(./sync_with_server.sh:*)",
+      "Bash(./quick_check.sh)",
+      "Bash(./apply_turnover_fix.sh:*)",
+      "Bash(timeout:*)",
+      "Bash(head:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }

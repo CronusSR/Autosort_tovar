@@ -1,3 +1,20 @@
+# Инструкции для обновления webhook на сервере
+# =============================================
+
+# 1. Подключитесь к серверу:
+ssh root@217.114.1.117
+cd /opt/inventory_system
+
+# 2. Создайте резервную копию:
+cp webhook_receiver.py webhook_receiver_backup_$(date +%Y%m%d_%H%M%S).py
+
+# 3. Создайте папки для раздельного хранения:
+mkdir -p webhook_uploads/sales
+mkdir -p webhook_uploads/stock  
+mkdir -p webhook_uploads/archive
+
+# 4. Создайте новый файл webhook_receiver.py:
+cat > webhook_receiver.py << 'EOF'
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -358,3 +375,24 @@ def old_stock_endpoint():
 if __name__ == '__main__':
     # Запуск в продакшене используйте gunicorn
     app.run(host='0.0.0.0', port=5000, debug=False)
+EOF
+
+# 5. Перезапустите webhook сервер:
+pkill -f webhook_receiver
+sleep 2
+nohup python3 webhook_receiver.py > webhook_5000.log 2>&1 &
+
+# 6. Проверьте работу:
+curl http://217.114.1.117:5000/
+curl http://217.114.1.117:5000/webhook/status
+ls -la webhook_uploads/
+
+# 7. Проверьте новую структуру папок:
+find webhook_uploads -type d
+
+echo "✅ Обновление завершено!"
+echo "📊 Новая версия: 2.1 (раздельные папки)"
+echo "📁 Структура:"
+echo "   • webhook_uploads/sales/ - данные о продажах"  
+echo "   • webhook_uploads/stock/ - данные об остатках"
+echo "   • webhook_uploads/archive/ - архивные данные"

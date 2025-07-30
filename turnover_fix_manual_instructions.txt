@@ -1,0 +1,118 @@
+# Инструкции для ручного применения исправления формулы оборачиваемости
+# =====================================================================
+
+# СТАТУС: Локально исправление уже применено ✅
+# ТРЕБУЕТСЯ: Применить на сервере
+
+# 1. Подключитесь к серверу:
+ssh root@217.114.1.117
+cd /opt/inventory_system
+
+# 2. Создайте резервную копию:
+cp webhook_persistent_app.py webhook_persistent_app_backup_$(date +%Y%m%d_%H%M%S).py
+
+# 3. Откройте файл для редактирования:
+nano webhook_persistent_app.py
+
+# 4. Найдите функцию calculate_turnover (около строки 61) и замените:
+
+# ЗАМЕНИТЬ ЭТО:
+# ================
+    # Средние продажи за день
+    sales_summary['daily_sales'] = sales_summary['quantity'] / period_days
+    
+    # Группируем остатки по товарам
+    stock_summary = stock_data.groupby(['item_code', 'item_name']).agg({
+        'quantity': 'sum'
+    }).reset_index()
+    stock_summary.rename(columns={'quantity': 'stock_quantity'}, inplace=True)
+    
+    # Объединяем данные
+    turnover_data = pd.merge(
+        stock_summary,
+        sales_summary,
+        on=['item_code', 'item_name'],
+        how='inner'
+    )
+    
+    # Расчет оборачиваемости (остатки / дневные_продажи * период)
+    turnover_data['turnover_days'] = np.where(
+        turnover_data['daily_sales'] > 0,
+        (turnover_data['stock_quantity'] / turnover_data['daily_sales']) * period_days,
+        999999  # Если нет продаж
+    )
+
+# НА ЭТО:
+# ========
+    # Переименовываем для ясности
+    sales_summary.rename(columns={'quantity': 'total_sales'}, inplace=True)
+    
+    # Группируем остатки по товарам
+    stock_summary = stock_data.groupby(['item_code', 'item_name']).agg({
+        'quantity': 'sum'
+    }).reset_index()
+    stock_summary.rename(columns={'quantity': 'stock_quantity'}, inplace=True)
+    
+    # Объединяем данные
+    turnover_data = pd.merge(
+        stock_summary,
+        sales_summary,
+        on=['item_code', 'item_name'],
+        how='inner'
+    )
+    
+    # Расчет оборачиваемости по формуле: (остатки / продажи) * 30.5
+    turnover_data['turnover_days'] = np.where(
+        turnover_data['total_sales'] > 0,
+        (turnover_data['stock_quantity'] / turnover_data['total_sales']) * 30.5,
+        999999  # Если нет продаж
+    )
+    
+    # Для обратной совместимости добавляем поле daily_sales
+    turnover_data['daily_sales'] = turnover_data['total_sales'] / period_days
+
+# 5. Также обновите комментарий к функции (около строки 62-68):
+
+# СТАРЫЙ КОММЕНТАРИЙ:
+    """
+    Расчет оборачиваемости по формуле: (остатки / продажи) * период
+    Период = 30.5 дней (средний месяц)
+    Результат - количество дней, за которые продается текущий остаток
+    """
+
+# НОВЫЙ КОММЕНТАРИЙ:
+    """
+    ИСПРАВЛЕНО: Расчет оборачиваемости по формуле: (остатки / продажи) * 30.5
+    Где:
+    - остатки - текущее количество товара на складе
+    - продажи - общее количество продаж за период
+    - 30.5 - фиксированный коэффициент (средний месяц)
+    Результат - количество дней, за которые продается текущий остаток
+    """
+
+# 6. Сохраните файл (Ctrl+X, Y, Enter в nano)
+
+# 7. Перезапустите Streamlit приложение:
+pkill -f 'streamlit run webhook_persistent_app.py'
+sleep 3
+nohup streamlit run webhook_persistent_app.py --server.port 8502 --server.address 0.0.0.0 > streamlit_8502.log 2>&1 &
+
+# 8. Проверьте запуск:
+ps aux | grep streamlit
+curl -s -o /dev/null -w "%{http_code}" http://217.114.1.117:8502
+
+# 9. Откройте в браузере и протестируйте:
+# http://217.114.1.117:8502
+# Перейдите в раздел "Анализ оборачиваемости"
+
+# ===========================
+# СУТЬ ИСПРАВЛЕНИЯ:
+# ===========================
+# БЫЛО: (остатки / среднедневные_продажи) * количество_дней_в_периоде
+# СТАЛО: (остатки / общие_продажи) * 30.5
+# 
+# Это упрощает формулу и делает ее более понятной:
+# - Если товара на складе 100 штук, а за период продали 50 штук
+# - Оборачиваемость = (100 / 50) * 30.5 = 61 день
+# 
+# Означает: при текущих продажах товар закончится через 61 день

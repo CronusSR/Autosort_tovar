@@ -1,0 +1,21 @@
+total 174400
+drwxr-xr-x  2 root root     4096 Jul 24 12:37 .
+drwxr-xr-x 15 root root    12288 Jul 25 03:51 ..
+-rw-r--r--  1 root root  8293851 Jul 23 15:30 2024-01-31.json
+-rw-r--r--  1 root root  9521249 Jul 23 15:32 2024-02-29.json
+-rw-r--r--  1 root root  8793450 Jul 23 15:33 2024-03-31.json
+-rw-r--r--  1 root root 10280647 Jul 23 15:34 2024-04-30.json
+-rw-r--r--  1 root root  8478139 Jul 23 15:35 2024-05-30.json
+-rw-r--r--  1 root root  9230096 Jul 23 15:37 2024-06-30.json
+-rw-r--r--  1 root root 10120195 Jul 23 15:38 2024-07-31.json
+-rw-r--r--  1 root root 10424618 Jul 23 15:39 2024-08-31.json
+-rw-r--r--  1 root root 10704979 Jul 23 15:41 2024-09-30.json
+-rw-r--r--  1 root root 10870117 Jul 23 15:42 2024-10-31.json
+-rw-r--r--  1 root root 10848324 Jul 23 15:43 2024-11-30.json
+-rw-r--r--  1 root root 10846021 Jul 23 15:46 2024-12-31.json
+-rw-r--r--  1 root root  8879455 Jul 23 15:24 2025-01-31.json
+-rw-r--r--  1 root root 10234041 Jul 23 15:47 2025-02-28.json
+-rw-r--r--  1 root root 10001271 Jul 23 15:48 2025-03-31.json
+-rw-r--r--  1 root root 11003945 Jul 23 15:49 2025-04-30.json
+-rw-r--r--  1 root root 10184188 Jul 23 15:50 2025-05-31.json
+-rw-r--r--  1 root root  9823327 Jul 23 15:51 2025-06-30.json

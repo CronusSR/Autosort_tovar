@@ -14,22 +14,6 @@ from datetime import datetime, timedelta
 from webhook_data_accumulator import WebhookDataAccumulator
 import json
 import time
-import os
-import pickle
-
-# Импорт pytz с fallback
-try:
-    import pytz
-    PYTZ_AVAILABLE = True
-except ImportError:
-    PYTZ_AVAILABLE = False
-    # Fallback для работы без pytz
-    class SimpleTimezone:
-        def __init__(self, name):
-            self.name = name
-        def localize(self, dt):
-            return dt
-    pytz = type('pytz', (), {'timezone': lambda name: SimpleTimezone(name)})()
 
 # Импорт системы инвентаризации
 try:
@@ -58,113 +42,6 @@ BRANCH_CITIES = {
     "6 Склад фурнитуры \"Овощная база\" Магазин продажи": "Шымкент"
 }
 
-# Иерархическая структура складов (правильная согласно требованиям)
-WAREHOUSE_HIERARCHY = {
-    # ХАБ (уровень 1) - главный склад
-    'База Склад Фурнитура Комплект': {
-        'level': 1,
-        'type': 'hub',
-        'city': 'Алматы',
-        'parent': None,
-        'children': [
-            'Казыбаева Склад Фурнитура TRADE',
-            'склад фурнитура № 1',
-            '4 Склад фурнитуры АЗМ Шымкент',
-            'Барыс Склад Фурнитура TRADE',
-            'АО Склад Фурнитура TRADE'
-        ],
-        'min_days': 30,
-        'max_days': 90,
-        'description': 'Главный хаб - пополняет все склады 2-го уровня'
-    },
-    
-    # СКЛАДЫ 2-го уровня (питаются от хаба)
-    'Казыбаева Склад Фурнитура TRADE': {
-        'level': 2,
-        'type': 'warehouse',
-        'city': 'Алматы',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': ['ТД Казыбаева ФУРНИТУРА магазин'],
-        'min_days': 15,
-        'max_days': 45,
-        'description': 'Склад 2-го уровня → пополняет магазин Казыбаева'
-    },
-    'склад фурнитура № 1': {
-        'level': 2,
-        'type': 'warehouse',
-        'city': 'Астана',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': ['Магазин фурнитуры'],
-        'min_days': 20,
-        'max_days': 60,
-        'description': 'Склад 2-го уровня → пополняет Магазин фурнитуры'
-    },
-    '4 Склад фурнитуры АЗМ Шымкент': {
-        'level': 2,
-        'type': 'warehouse',
-        'city': 'Шымкент',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': ['6 Склад фурнитуры "Овощная база" Магазин'],
-        'min_days': 20,
-        'max_days': 60,
-        'description': 'Склад 2-го уровня → пополняет магазин в Шымкенте'
-    },
-    
-    # МАГАЗИНЫ НАПРЯМУЮ ОТ ХАБА (без своих складов)
-    'Барыс Склад Фурнитура TRADE': {
-        'level': 2,
-        'type': 'shop',
-        'city': 'Барыс',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': [],
-        'min_days': 15,
-        'max_days': 45,
-        'description': 'Магазин напрямую от хаба'
-    },
-    'АО Склад Фурнитура TRADE': {
-        'level': 2,
-        'type': 'shop',
-        'city': 'Алтын Орда',
-        'parent': 'База Склад Фурнитура Комплект',
-        'children': [],
-        'min_days': 10,
-        'max_days': 30,
-        'description': 'Магазин напрямую от хаба (кромочные материалы)'
-    },
-    
-    # МАГАЗИНЫ 3-го уровня (питаются от складов 2-го уровня)
-    'ТД Казыбаева ФУРНИТУРА магазин': {
-        'level': 3,
-        'type': 'shop',
-        'city': 'Алматы',
-        'parent': 'Казыбаева Склад Фурнитура TRADE',
-        'children': [],
-        'min_days': 8,
-        'max_days': 30,
-        'description': 'Магазин 3-го уровня ← от Казыбаева склад'
-    },
-    'Магазин фурнитуры': {
-        'level': 3,
-        'type': 'shop',
-        'city': 'Астана',
-        'parent': 'склад фурнитура № 1',
-        'children': [],
-        'min_days': 8,
-        'max_days': 30,
-        'description': 'Магазин 3-го уровня ← от склад № 1'
-    },
-    '6 Склад фурнитуры "Овощная база" Магазин': {
-        'level': 3,
-        'type': 'shop',
-        'city': 'Шымкент',
-        'parent': '4 Склад фурнитуры АЗМ Шымкент',
-        'children': [],
-        'min_days': 8,
-        'max_days': 30,
-        'description': 'Магазин 3-го уровня ← от Шымкент склад'
-    }
-}
-
 def get_city_from_branch(branch_name):
     """Определение города по названию филиала"""
     for key, city in BRANCH_CITIES.items():
@@ -181,148 +58,13 @@ def get_city_from_branch(branch_name):
     
     return "Другой"
 
-def get_warehouse_info(warehouse_name):
-    """Получить информацию о складе из иерархии"""
-    for name, info in WAREHOUSE_HIERARCHY.items():
-        if name in warehouse_name or warehouse_name in name:
-            return info
-    return None
-
-def get_warehouse_level(warehouse_name):
-    """Получить уровень склада в иерархии"""
-    info = get_warehouse_info(warehouse_name)
-    return info['level'] if info else 0
-
-def get_warehouse_type(warehouse_name):
-    """Получить тип склада (hub/warehouse/shop)"""
-    info = get_warehouse_info(warehouse_name)
-    return info['type'] if info else 'unknown'
-
-def get_parent_warehouse(warehouse_name):
-    """Получить родительский склад"""
-    info = get_warehouse_info(warehouse_name)
-    return info['parent'] if info else None
-
-def get_children_warehouses(warehouse_name):
-    """Получить дочерние склады"""
-    info = get_warehouse_info(warehouse_name)
-    return info['children'] if info else []
-
-def calculate_stock_requirements(ads, warehouse_name):
-    """Расчет минимальных и максимальных остатков на основе ADS и типа склада"""
-    info = get_warehouse_info(warehouse_name)
-    if not info:
-        # Дефолтные значения для неизвестных складов
-        min_days, max_days = 8, 30
-    else:
-        min_days, max_days = info['min_days'], info['max_days']
-    
-    min_stock = ads * min_days
-    max_stock = ads * max_days
-    return min_stock, max_stock
-
-# Система кэширования ABC анализа
-CACHE_DIR = "cache"
-ABC_CACHE_FILE = os.path.join(CACHE_DIR, "abc_analysis_cache.pkl")
-VLADIVOSTOK_TZ = pytz.timezone('Asia/Vladivostok') if PYTZ_AVAILABLE else None
-
-def ensure_cache_dir():
-    """Создает директорию для кэша если её нет"""
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
-
-def should_update_abc_cache():
-    """Проверяет нужно ли обновить кэш ABC анализа"""
-    if not PYTZ_AVAILABLE:
-        return True
-    
-    if not os.path.exists(ABC_CACHE_FILE):
-        return True
-    
-    # Получаем время последнего обновления кэша
-    cache_time = datetime.fromtimestamp(os.path.getmtime(ABC_CACHE_FILE))
-    if VLADIVOSTOK_TZ:
-        cache_time_vl = VLADIVOSTOK_TZ.localize(cache_time)
-        now_vl = datetime.now(VLADIVOSTOK_TZ)
-    else:
-        cache_time_vl = cache_time
-        now_vl = datetime.now()
-    
-    # Проверяем прошло ли время для автообновления (20:00 по Владивостоку)
-    today_update_time = now_vl.replace(hour=20, minute=0, second=0, microsecond=0)
-    yesterday_update_time = today_update_time - timedelta(days=1)
-    
-    # Если кэш старше чем сегодняшние 20:00 и уже наступило время обновления
-    if cache_time_vl < today_update_time and now_vl >= today_update_time:
-        return True
-    
-    # Если кэш старше 24 часов
-    if now_vl - cache_time_vl > timedelta(hours=24):
-        return True
-    
-    return False
-
-def save_abc_cache(abc_data):
-    """Сохраняет результаты ABC анализа в кэш"""
-    if not PYTZ_AVAILABLE:
-        return None
-    
-    ensure_cache_dir()
-    try:
-        with open(ABC_CACHE_FILE, 'wb') as f:
-            pickle.dump({
-                'data': abc_data,
-                'timestamp': datetime.now(VLADIVOSTOK_TZ) if VLADIVOSTOK_TZ else datetime.now(),
-                'version': '1.0'
-            }, f)
-        return True
-    except Exception as e:
-        st.error(f"Ошибка сохранения кэша: {e}")
-        return False
-
-def load_abc_cache():
-    """Загружает результаты ABC анализа из кэша"""
-    if not PYTZ_AVAILABLE:
-        return None
-    
-    try:
-        if os.path.exists(ABC_CACHE_FILE):
-            with open(ABC_CACHE_FILE, 'rb') as f:
-                cache = pickle.load(f)
-                return cache['data'], cache['timestamp']
-    except Exception as e:
-        st.error(f"Ошибка загрузки кэша: {e}")
-    return None, None
-
-def get_cache_status():
-    """Возвращает информацию о состоянии кэша"""
-    if not PYTZ_AVAILABLE:
-        return None
-    
-    if not os.path.exists(ABC_CACHE_FILE):
-        return "Кэш не создан"
-    
-    cache_time = datetime.fromtimestamp(os.path.getmtime(ABC_CACHE_FILE))
-    if VLADIVOSTOK_TZ:
-        cache_time_vl = VLADIVOSTOK_TZ.localize(cache_time)
-        now_vl = datetime.now(VLADIVOSTOK_TZ)
-    else:
-        cache_time_vl = cache_time
-        now_vl = datetime.now()
-    
-    age = now_vl - cache_time_vl
-    
-    if age < timedelta(hours=1):
-        return f"Обновлен {int(age.total_seconds() / 60)} мин назад"
-    elif age < timedelta(days=1):
-        return f"Обновлен {int(age.total_seconds() / 3600)} ч назад"
-    else:
-        return f"Обновлен {age.days} дн назад"
-
 def calculate_turnover(stock_data, sales_data, period_days=30.5):
     """
-    Расчет оборачиваемости по формуле: (остатки / продажи) * период
-    Период = 30.5 дней (средний месяц)
+    ИСПРАВЛЕНО: Расчет оборачиваемости по формуле: (остатки / продажи) * 30.5
+    Где:
+    - остатки - текущее количество товара на складе
+    - продажи - общее количество продаж за период
+    - 30.5 - фиксированный коэффициент (средний месяц)
     Результат - количество дней, за которые продается текущий остаток
     """
     if sales_data.empty or stock_data.empty:
@@ -334,8 +76,8 @@ def calculate_turnover(stock_data, sales_data, period_days=30.5):
         'amount': 'sum'
     }).reset_index()
     
-    # Средние продажи за день
-    sales_summary['daily_sales'] = sales_summary['quantity'] / period_days
+    # Переименовываем для ясности
+    sales_summary.rename(columns={'quantity': 'total_sales'}, inplace=True)
     
     # Группируем остатки по товарам
     stock_summary = stock_data.groupby(['item_code', 'item_name']).agg({
@@ -351,12 +93,15 @@ def calculate_turnover(stock_data, sales_data, period_days=30.5):
         how='inner'
     )
     
-    # Расчет оборачиваемости (остатки / дневные_продажи * период)
+    # Расчет оборачиваемости по формуле: (остатки / продажи) * 30.5
     turnover_data['turnover_days'] = np.where(
-        turnover_data['daily_sales'] > 0,
-        (turnover_data['stock_quantity'] / turnover_data['daily_sales']) * period_days,
+        turnover_data['total_sales'] > 0,
+        (turnover_data['stock_quantity'] / turnover_data['total_sales']) * 30.5,
         999999  # Если нет продаж
     )
+    
+    # Для обратной совместимости добавляем поле daily_sales
+    turnover_data['daily_sales'] = turnover_data['total_sales'] / period_days
     
     # Классификация оборачиваемости
     turnover_data['turnover_category'] = pd.cut(
@@ -817,15 +562,14 @@ with tab2:
             st.subheader("📊 Распределение товаров по оборачиваемости")
             
             turnover_distribution = turnover_data['turnover_category'].value_counts().reset_index()
-            turnover_distribution.columns = ['category', 'count']  # Переименовываем колонки
             
             fig_dist = px.bar(
                 turnover_distribution,
-                x='category',
-                y='count',
+                x='index',
+                y='turnover_category',
                 title='Распределение товаров по скорости оборачиваемости',
-                labels={'category': 'Категория оборачиваемости', 'count': 'Количество SKU'},
-                color='category',
+                labels={'index': 'Категория оборачиваемости', 'turnover_category': 'Количество SKU'},
+                color='index',
                 color_discrete_map={
                     'Высокая (< 30 дней)': '#2ecc71',
                     'Хорошая (30-60)': '#3498db',
@@ -978,38 +722,22 @@ with tab3:
 with tab4:
     st.header("📦 ABC анализ по категориям")
     
-    # Панель управления кэшем
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        cache_status = get_cache_status()
-        st.info(f"📊 Статус кэша: {cache_status}")
-    with col2:
-        force_update = st.button("🔄 Обновить данные", key="abc_update_btn")
-    with col3:
-        if st.button("🗑️ Очистить кэш", key="abc_clear_btn"):
-            if os.path.exists(ABC_CACHE_FILE):
-                os.remove(ABC_CACHE_FILE)
-                st.success("Кэш очищен")
-                st.rerun()
-    
     if not sales_data.empty and 'category_path' in sales_data.columns:
         # Инициализация состояния раскрытых категорий
         if 'expanded_categories' not in st.session_state:
             st.session_state.expanded_categories = set()
         
+        @st.cache_data(ttl=300)
         def build_category_tree(_df):
-            """Строит дерево категорий из данных с продвинутым кэшированием"""
-            # Проверяем нужно ли обновить кэш или была нажата кнопка обновления
-            if should_update_abc_cache() or force_update:
-                with st.spinner("🔄 Обновление ABC анализа... Это может занять несколько минут"):
-                    tree = {}
-                    
-                    # Берем выборку для ускорения если данных много
-                    if len(_df) > 50000:
-                        df_sample = _df.sample(n=30000, random_state=42)
-                        st.info("📊 Используется оптимизированная выборка для ABC анализа")
-                    else:
-                        df_sample = _df
+            """Строит дерево категорий из данных с кешированием"""
+            tree = {}
+            
+            # Берем выборку для ускорения если данных много
+            if len(_df) > 50000:
+                df_sample = _df.sample(n=20000, random_state=42)
+                st.info("📊 Для ускорения ABC анализа используется выборка данных")
+            else:
+                df_sample = _df
             
             for _, row in df_sample.iterrows():
                 if pd.isna(row['category_path']) or row['category_path'] == '':
@@ -1035,22 +763,8 @@ with tab4:
                     current_node[part]['total_amount'] += row['amount']
                     current_node[part]['total_quantity'] += row['quantity']
                     current_node = current_node[part]['children']
-                
-                # Сохраняем результат в кэш
-                if save_abc_cache(tree):
-                    now_time = datetime.now(VLADIVOSTOK_TZ) if VLADIVOSTOK_TZ else datetime.now()
-                    st.success(f"✅ ABC анализ обновлен в {now_time.strftime('%H:%M')} {'(Владивосток)' if VLADIVOSTOK_TZ else ''}")
-                
-                return tree
-            else:
-                # Загружаем из кэша
-                cached_tree, cache_time = load_abc_cache()
-                if cached_tree is not None:
-                    st.info(f"📊 Загружен из кэша (обновлен: {cache_time.strftime('%d.%m.%Y %H:%M')})")
-                    return cached_tree
-                else:
-                    # Фолбэк - строим дерево если кэш недоступен
-                    return build_category_tree(_df)
+            
+            return tree
         
         def calculate_abc_for_level(items_data):
             """Вычисляет ABC для набора элементов"""
@@ -1115,106 +829,24 @@ with tab4:
                     st.metric("🅾️ Группа C", f"{len(c_items)}", 
                              f"{sum(item['percent'] for item in c_items):.1f}% выручки")
             
-            # Показываем данные в табличном виде
-            if level == 0:
-                st.subheader("📋 Категории верхнего уровня")
-            else:
-                st.subheader(f"📋 Подкатегории (уровень {level + 1})")
-            
-            # Создаем DataFrame для таблицы
-            table_data = []
-            for item in abc_data[:20]:  # Ограничиваем количество
-                table_data.append({
-                    'Категория': item['name'][:50],
-                    'ABC': item['abc'],
-                    'Выручка': f"{item['total_amount']:,.0f} ₸",
-                    'Количество': f"{item['total_quantity']:,.0f}",
-                    'Доля %': f"{item['percent']:.1f}%",
-                    'Товаров': item['items_count'],
-                    'Есть подкатегории': '✅' if item['has_children'] else '❌'
-                })
-            
-            # Отображаем таблицу
-            if table_data:
-                df_table = pd.DataFrame(table_data)
+            # Рендерим таблицу с раскрывающимися строками (максимум 20 на уровень)
+            for idx, item in enumerate(abc_data[:20]):  # Ограничиваем количество
+                # Определяем цвет фона для ABC
+                if item['abc'] == 'A':
+                    bg_color = '#d4edda'
+                elif item['abc'] == 'B':
+                    bg_color = '#fff3cd'
+                else:
+                    bg_color = '#f8d7da'
                 
-                # Стилизуем таблицу по ABC
-                def style_abc(row):
-                    if row['ABC'] == 'A':
-                        return ['background-color: #d4edda'] * len(row)
-                    elif row['ABC'] == 'B':
-                        return ['background-color: #fff3cd'] * len(row)
-                    else:
-                        return ['background-color: #f8d7da'] * len(row)
+                # Отступ для уровня вложенности
+                indent = "　" * level
                 
-                styled_df = df_table.style.apply(style_abc, axis=1)
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                # Создаем expandable контейнер для каждой категории
+                expanded_key = f"{item['path']}_level_{level}"
                 
-                # Добавляем возможность перехода на следующий уровень
-                st.subheader("🔍 Детальный просмотр")
-                
-                category_names = [item['name'] for item in abc_data if item['has_children']]
-                if category_names:
-                    selected_category = st.selectbox(
-                        "Выберите категорию для детального просмотра:",
-                        options=[''] + category_names,
-                        key=f"category_select_level_{level}"
-                    )
-                    
-                    if selected_category:
-                        st.write(f"**Переход в категорию: {selected_category}**")
-                        if selected_category in tree:
-                            render_category_level(tree[selected_category]['children'], level + 1, f"{parent_path}/{selected_category}" if parent_path else selected_category)
-                
-                # Показываем товары в выбранной категории
-                product_category_names = [item['name'] for item in abc_data]
-                if product_category_names:
-                    selected_product_category = st.selectbox(
-                        "Показать товары в категории:",
-                        options=[''] + product_category_names,
-                        key=f"product_select_level_{level}"
-                    )
-                    
-                    if selected_product_category and selected_product_category in tree:
-                        items = tree[selected_product_category]['items']
-                        if items:
-                            st.subheader(f"🛍️ Товары в категории '{selected_product_category}'")
-                            
-                            # Создаем таблицу товаров
-                            product_data = []
-                            sorted_items = sorted(items, key=lambda x: x['amount'], reverse=True)[:50]  # Топ-50 товаров
-                            
-                            for i, product in enumerate(sorted_items):
-                                # Простая ABC для товаров
-                                if i < len(sorted_items) * 0.2:  # Топ 20%
-                                    abc_class = 'A'
-                                elif i < len(sorted_items) * 0.5:  # Следующие 30%
-                                    abc_class = 'B'
-                                else:
-                                    abc_class = 'C'
-                                
-                                product_data.append({
-                                    'Артикул': product['item_code'],
-                                    'Наименование': product['item_name'][:40],
-                                    'ABC': abc_class,
-                                    'Выручка': f"{product['amount']:,.0f} ₸",
-                                    'Количество': f"{product['quantity']:,.0f}",
-                                    'Филиал': product['branch']
-                                })
-                            
-                            if product_data:
-                                df_products = pd.DataFrame(product_data)
-                                
-                                def style_product_abc(row):
-                                    if row['ABC'] == 'A':
-                                        return ['background-color: #d4edda'] * len(row)
-                                    elif row['ABC'] == 'B':
-                                        return ['background-color: #fff3cd'] * len(row)
-                                    else:
-                                        return ['background-color: #f8d7da'] * len(row)
-                                
-                                styled_products = df_products.style.apply(style_product_abc, axis=1)
-                                st.dataframe(styled_products, use_container_width=True, hide_index=True)
+                # Иконка в зависимости от наличия детей
+                icon = "📂" if item['has_children'] else "📄"
                 
                 with st.container():
                     # Основная строка категории
@@ -1402,35 +1034,21 @@ with tab5:
             how='outer'
         ).fillna(0)
         
-        # Добавляем города и иерархическую информацию
+        # Добавляем города
         movement_data['city'] = movement_data['branch'].apply(get_city_from_branch)
-        movement_data['warehouse_level'] = movement_data['branch'].apply(get_warehouse_level)
-        movement_data['warehouse_type'] = movement_data['branch'].apply(get_warehouse_type)
-        movement_data['parent_warehouse'] = movement_data['branch'].apply(get_parent_warehouse)
         
-        # Рассчитываем среднедневные продажи с учетом иерархии
+        # Рассчитываем среднедневные продажи и дни до истощения
         movement_data['daily_sales'] = movement_data['quantity'] / 30.5  # За месяц
-        
-        # Рассчитываем нормативы MIN/MAX с учетом типа склада
-        movement_data['min_stock'] = movement_data.apply(
-            lambda row: calculate_stock_requirements(row['daily_sales'], row['branch'])[0], axis=1
-        )
-        movement_data['max_stock'] = movement_data.apply(
-            lambda row: calculate_stock_requirements(row['daily_sales'], row['branch'])[1], axis=1
-        )
-        
         movement_data['days_until_empty'] = np.where(
             movement_data['daily_sales'] > 0,
-            movement_data['stock_quantity'] / movement_data['daily_sales'],
+            (movement_data['stock_quantity'] / movement_data['daily_sales']) * 30.5,
             999999
         )
         
-        # Рассчитываем потребность в перемещениях с учетом иерархии
-        movement_data['needs_stock'] = movement_data['stock_quantity'] < movement_data['min_stock']
-        movement_data['has_excess'] = movement_data['stock_quantity'] > movement_data['max_stock']
-        movement_data['in_norm'] = (~movement_data['needs_stock']) & (~movement_data['has_excess'])
-        movement_data['deficit_amount'] = np.maximum(0, movement_data['min_stock'] - movement_data['stock_quantity'])
-        movement_data['excess_amount'] = np.maximum(0, movement_data['stock_quantity'] - movement_data['max_stock'])
+        # Рассчитываем потребность в перемещениях
+        movement_data['needs_stock'] = (movement_data['daily_sales'] > 0) & (movement_data['days_until_empty'] < 30)
+        movement_data['has_excess'] = (movement_data['daily_sales'] == 0) & (movement_data['stock_quantity'] > 0)
+        movement_data['excess_ratio'] = movement_data['stock_quantity'] / (movement_data['daily_sales'] + 0.001)
         
         if not movement_data.empty:
             # Метрики перемещений
@@ -1492,107 +1110,8 @@ with tab5:
                 )
                 st.plotly_chart(fig_excess, use_container_width=True)
             
-            # Анализ по уровням иерархии
-            st.subheader("🏗️ Анализ по уровням иерархии складов")
-            
-            # Группировка по уровням и типам складов
-            hierarchy_analysis = movement_data.groupby(['warehouse_level', 'warehouse_type']).agg({
-                'needs_stock': 'sum',
-                'has_excess': 'sum', 
-                'in_norm': 'sum',
-                'deficit_amount': 'sum',
-                'excess_amount': 'sum',
-                'stock_quantity': 'sum'
-            }).reset_index()
-            
-            # Добавляем описания уровней
-            level_descriptions = {
-                1: "Уровень 1 - Главный хаб",
-                2: "Уровень 2 - Склады и магазины от хаба", 
-                3: "Уровень 3 - Магазины от складов"
-            }
-            hierarchy_analysis['level_description'] = hierarchy_analysis['warehouse_level'].map(level_descriptions)
-            hierarchy_analysis = hierarchy_analysis.sort_values('warehouse_level')
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # График по уровням
-                fig_hierarchy = px.bar(
-                    hierarchy_analysis,
-                    x='level_description',
-                    y=['needs_stock', 'has_excess', 'in_norm'],
-                    title='Статус товаров по уровням иерархии',
-                    labels={'value': 'Количество позиций', 'level_description': 'Уровень иерархии'},
-                    color_discrete_map={
-                        'needs_stock': '#ff4444',
-                        'has_excess': '#44ff44', 
-                        'in_norm': '#4444ff'
-                    }
-                )
-                st.plotly_chart(fig_hierarchy, use_container_width=True)
-            
-            with col2:
-                # Таблица статистики по иерархии
-                st.write("**Статистика по уровням:**")
-                for _, row in hierarchy_analysis.iterrows():
-                    total_items = row['needs_stock'] + row['has_excess'] + row['in_norm']
-                    if total_items > 0:
-                        st.write(f"**{row['level_description']} ({row['warehouse_type']})**")
-                        st.write(f"- 🔴 Дефицит: {row['needs_stock']} позиций ({row['deficit_amount']:.0f} ед.)")
-                        st.write(f"- 🟢 Избыток: {row['has_excess']} позиций ({row['excess_amount']:.0f} ед.)")
-                        st.write(f"- 🔵 В норме: {row['in_norm']} позиций")
-                        st.write(f"- 📊 Всего остатков: {row['stock_quantity']:.0f} ед.")
-                        st.write("---")
-            
-            # Конкретные рекомендации по перемещениям с учетом иерархии
-            st.subheader("📋 Иерархические рекомендации по перемещениям")
-            
-            st.info("💡 **Правила перемещений по иерархии:**\n"
-                   "- При дефиците → получить от родительского склада\n"
-                   "- При избытке → отдать в родительский склад или распределить дочерним\n" 
-                   "- Хаб может перераспределять между всеми подчиненными")
-            
-            # Генерируем рекомендации по иерархии
-            hierarchy_recommendations = []
-            
-            for _, row in movement_data.iterrows():
-                if row['needs_stock'] and row['deficit_amount'] > 5:
-                    # Дефицит - нужно получить от родителя
-                    parent = row['parent_warehouse']
-                    if parent:
-                        hierarchy_recommendations.append({
-                            'Тип': '📥 Получить',
-                            'Товар': row['item_name'],
-                            'От склада': parent,
-                            'К складу': row['branch'],
-                            'Количество': f"{row['deficit_amount']:.0f}",
-                            'Причина': f"Дефицит (осталось {row['days_until_empty']:.1f} дней)",
-                            'Приоритет': 'Высокий' if row['days_until_empty'] < 7 else 'Средний'
-                        })
-                
-                elif row['has_excess'] and row['excess_amount'] > 10:
-                    # Избыток - нужно отдать родителю
-                    parent = row['parent_warehouse']
-                    if parent:
-                        hierarchy_recommendations.append({
-                            'Тип': '📤 Отдать',
-                            'Товар': row['item_name'],
-                            'От склада': row['branch'],
-                            'К складу': parent,
-                            'Количество': f"{row['excess_amount']:.0f}",
-                            'Причина': f"Избыток (запас на {row['days_until_empty']:.0f} дней)",
-                            'Приоритет': 'Низкий'
-                        })
-            
-            if hierarchy_recommendations:
-                df_recommendations = pd.DataFrame(hierarchy_recommendations)
-                st.dataframe(df_recommendations, use_container_width=True)
-            else:
-                st.info("Нет рекомендаций для перемещений по иерархии")
-            
             # Конкретные рекомендации по перемещениям
-            st.subheader("📋 Общие рекомендации по перемещениям")
+            st.subheader("📋 Рекомендации по перемещениям")
             
             # Фильтры для рекомендаций
             col1, col2 = st.columns(2)

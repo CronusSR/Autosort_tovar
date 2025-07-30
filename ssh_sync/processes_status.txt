@@ -1,0 +1,7 @@
+root         783  0.0  0.4  32808 18852 ?        Ss   Jul24   0:00 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+root         833  0.0  0.6 400216 24776 ?        Ssl  Jul24   4:51 /usr/bin/python3 /usr/bin/fail2ban-server -xf start
+root         834  0.0  4.9 1010616 197464 ?      Ssl  Jul24   1:22 /opt/inventory_system/venv/bin/python3 /opt/inventory_system/venv/bin/streamlit run streamlit_modular_app.py --server.port=8501 --server.address=0.0.0.0
+root         841  0.0  0.6  36724 27616 ?        Ss   Jul24   1:23 /usr/bin/python3 /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf
+root         842  0.0  0.5 109792 21224 ?        Ssl  Jul24   0:00 /usr/bin/python3 /usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal
+root         843  0.0  0.7 186092 30012 ?        Ss   Jul24   1:16 /opt/inventory_system/venv/bin/python webhook_receiver.py
+root     1144023  0.0 23.3 2042616 935164 ?      Ssl  Jul25   1:33 /opt/inventory_system/venv/bin/python3 /opt/inventory_system/venv/bin/streamlit run webhook_persistent_app.py --server.port 8502 --server.address 0.0.0.0 --server.headless true
